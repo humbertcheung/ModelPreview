@@ -1,0 +1,9 @@
+newmtl red_mat
+Kd 0.92 0.30 0.28
+Ka 0.1 0.1 0.1
+Ns 60
+
+newmtl blue_mat
+Kd 0.28 0.55 0.98
+Ka 0.1 0.1 0.1
+Ns 90

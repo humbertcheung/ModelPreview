@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# 构建产物（构建脚本生成，不入库）
+build/
+
+# 日志
+*.log
+
+# 编辑器
+.vscode/
+.idea/
+
+# Swift 构建临时产物
+*.o
+.build/

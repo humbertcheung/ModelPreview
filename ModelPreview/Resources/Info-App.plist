@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>3D模型预览</string>
+	<key>CFBundleName</key>
+	<string>3D模型预览</string>
+	<key>CFBundleExecutable</key>
+	<string>ModelPreview</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.modelpreview.macos</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics-design</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>3D Model Preview</string>
+
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>3D 模型文件</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.3d-content</string>
+				<string>org.khronos.glb</string>
+				<string>org.khronos.glTF.binary</string>
+				<string>org.khronos.gltf</string>
+				<string>org.khronos.glTF</string>
+				<string>public.geometry-definition-format</string>
+				<string>com.modelpreview.obj</string>
+				<string>com.autodesk.mac.fbx</string>
+				<string>com.modelpreview.fbx</string>
+				<string>public.standard-tesselated-geometry-format</string>
+				<string>com.modelpreview.stl</string>
+				<string>public.polygon-file-format</string>
+				<string>com.modelpreview.ply</string>
+				<string>org.khronos.collada.digital-asset-exchange</string>
+				<string>com.modelpreview.dae</string>
+				<string>com.modelpreview.threemf</string>
+				<string>org.3mf.threemf</string>
+				<string>com.modelpreview.blend</string>
+				<string>org.blenderfoundation.blender.file</string>
+				<string>org.blender.foundation.blender</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.khronos.glTF.binary</string>
+			<key>UTTypeDescription</key>
+			<string>glTF Binary Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>glb</string></array>
+				<key>public.mime-type</key>
+				<array><string>model/gltf-binary</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.khronos.glTF</string>
+			<key>UTTypeDescription</key>
+			<string>glTF Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>gltf</string></array>
+				<key>public.mime-type</key>
+				<array><string>model/gltf+json</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.obj</string>
+			<key>UTTypeDescription</key>
+			<string>Wavefront OBJ Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>obj</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.fbx</string>
+			<key>UTTypeDescription</key>
+			<string>Autodesk FBX Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>fbx</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.stl</string>
+			<key>UTTypeDescription</key>
+			<string>Stereolithography Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>stl</string></array>
+				<key>public.mime-type</key>
+				<array><string>model/stl</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.ply</string>
+			<key>UTTypeDescription</key>
+			<string>Polygon File Format Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>ply</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.dae</string>
+			<key>UTTypeDescription</key>
+			<string>Collada Model</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>dae</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.threemf</string>
+			<key>UTTypeDescription</key>
+			<string>3D Manufacturing Format</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>3mf</string></array>
+				<key>public.mime-type</key>
+				<array><string>model/3mf</string></array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.modelpreview.blend</string>
+			<key>UTTypeDescription</key>
+			<string>Blender Scene</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>blend</string></array>
+			</dict>
+		</dict>
+	</array>
+
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.blender.foundation.blender</string>
+			<key>UTTypeDescription</key>
+			<string>Blender Scene</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>blend</string></array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

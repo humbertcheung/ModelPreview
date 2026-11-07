@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>3D模型预览 QuickLook</string>
+	<key>CFBundleName</key>
+	<string>QuickLookPreview</string>
+	<key>CFBundleExecutable</key>
+	<string>QuickLookExtension</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.modelpreview.macos.QuickLook</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>3D Model Preview</string>
+
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>public.3d-content</string>
+				<string>org.khronos.glb</string>
+				<string>org.khronos.glTF.binary</string>
+				<string>org.khronos.gltf</string>
+				<string>org.khronos.glTF</string>
+				<string>public.geometry-definition-format</string>
+				<string>com.modelpreview.obj</string>
+				<string>com.autodesk.mac.fbx</string>
+				<string>com.modelpreview.fbx</string>
+				<string>public.standard-tesselated-geometry-format</string>
+				<string>com.modelpreview.stl</string>
+				<string>public.polygon-file-format</string>
+				<string>com.modelpreview.ply</string>
+				<string>org.khronos.collada.digital-asset-exchange</string>
+				<string>com.modelpreview.dae</string>
+				<string>com.modelpreview.threemf</string>
+				<string>org.3mf.threemf</string>
+				<string>com.modelpreview.blend</string>
+				<string>org.blenderfoundation.blender.file</string>
+				<string>org.blender.foundation.blender</string>
+			</array>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.quicklook.preview</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>QuickLookExtension.PreviewViewController</string>
+	</dict>
+</dict>
+</plist>

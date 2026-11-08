@@ -7,6 +7,7 @@ const $ = (id) => document.getElementById(id);
 const bridge = window.webkit?.messageHandlers?.host ?? null;
 const postToNative = (msg) => { try { bridge?.postMessage(msg); } catch { /* QL 宿主可能已释放 */ } };
 const b64ToJSON = (b64) => JSON.parse(new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+const fmtNum1 = (v) => { const t = (v + 0).toFixed(1); return t === '-0.0' ? '0.0' : t; }; // 负零归一
 
 /* ================= 应用 ================= */
 
@@ -139,23 +140,35 @@ class App {
         document.querySelectorAll('#ground-colors .gswatch').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
         this.core.setGroundColor(parseInt(b.dataset.c.replace('#', ''), 16), true);
+        this.syncGroundRow(); // 切到系统地面后高度滑块行立即可用
         this.toast('地面已切换');
       });
     });
     $('opt-axes').addEventListener('change', e => this.core.setAxesVisible(e.target.checked));
-    $('opt-shadow').addEventListener('change', e => this.core.setShadowVisible(e.target.checked));
+    $('opt-shadow').addEventListener('change', e => {
+      this.core.setShadowVisible(e.target.checked);
+      // 阴影链路诊断：随开关切换上报实际状态
+      try {
+        const L = this.core.keyLight, c = L.shadow.camera;
+        let castN = 0, recvN = 0;
+        for (const m of this.core.models) m.root.traverse(o => { if (o.isMesh) { if (o.castShadow) castN++; if (o.receiveShadow) recvN++; } });
+        postToNative({ type: 'debug-info', shadow: {
+          checked: e.target.checked, lc: L.castShadow, smEnabled: this.core.renderer.shadowMap.enabled,
+          models: this.core.models.length, castN, recvN,
+          L: +c.left.toFixed(1), R: +c.right.toFixed(1), T: +c.top.toFixed(1), near: +c.near.toFixed(1), far: +c.far.toFixed(1),
+          pos: L.position.toArray().map(v => +v.toFixed(1)),
+          target: L.target.position.toArray().map(v => +v.toFixed(1)),
+          mapSize: L.shadow.mapSize.width, mapNull: !L.shadow.map,
+        } });
+      } catch { /* 诊断不影响主流程 */ }
+    });
     $('opt-edges').addEventListener('change', e => this.shading.setEdges(e.target.checked, this.core.models, this.core.theme));
     $('sl-ground-h').addEventListener('input', e => {
       const v = +e.target.value;
-      $('v-ground-h').textContent = (v / 10).toFixed(1);
+      $('v-ground-h').textContent = fmtNum1(v / 10); // 负零归一
       this.core.setGroundHeightOffset(v / 10);
     });
-    // 有/无系统地面 → 高度滑块显隐
-    const syncGroundRow = () => {
-      const hasGenerated = this.core.groundMode === 'generated' && this.core.generatedGround;
-      $('ground-height-row').style.display = hasGenerated ? 'flex' : 'none';
-    };
-    $('opt-ground').addEventListener('change', syncGroundRow);
+    $('opt-ground').addEventListener('change', () => this.syncGroundRow());
     document.querySelectorAll('#ground-colors .gswatch').forEach(b => {
       const origHandler = b.addEventListener;
     });
@@ -192,12 +205,27 @@ class App {
     });
     $('sl-exposure').addEventListener('input', e => {
       this.core.setExposure(e.target.value / 100);
-      $('v-exposure').textContent = (e.target.value / 100).toFixed(1);
+      $('v-exposure').textContent = fmtNum1(e.target.value / 100);
     });
     $('sl-env').addEventListener('input', e => {
       this.core.setEnvIntensity(e.target.value / 100);
-      $('v-env').textContent = (e.target.value / 100).toFixed(1);
+      $('v-env').textContent = fmtNum1(e.target.value / 100);
     });
+    // 渲染调节重置：曝光恢复 1.0 / 环境恢复 0.2
+    $('render-reset').addEventListener('click', () => {
+      $('sl-exposure').value = 100; $('sl-env').value = 20;
+      this.core.setExposure(1.0); this.core.setEnvIntensity(0.2);
+      $('v-exposure').textContent = '1.0'; $('v-env').textContent = '0.2';
+      this.toast('渲染调节已重置');
+    });
+  }
+
+  /** 视口里是否为「系统地面板」→ 高度滑块显隐。
+   *  条件用 generatedGround.visible 而非 groundMode==='generated'：
+   *  地面开关自动补的地面处于 auto 模式，同样可以调高度；模型自带地面不可调，保持隐藏。 */
+  syncGroundRow() {
+    const hasGenerated = !!(this.core.generatedGround && this.core.generatedGround.visible);
+    $('ground-height-row').style.display = hasGenerated ? 'flex' : 'none';
   }
 
   /* ---------- 空格预览设置（写入共享文件，QL 扩展读取） ---------- */
@@ -333,6 +361,7 @@ class App {
         if (ok) {
           $('opt-ground').checked = true;
           this.core.setGroundVisible(true);
+          this.syncGroundRow();
           this.showGroundNote('使用系统地面');
         }
       }
@@ -384,6 +413,7 @@ class App {
 
     if (warnings.length) this.toast(warnings.slice(0, 2).join('；'), 3500);
     this.core.resetView();
+    this.syncGroundRow();
     this.hideLoading();
     this.hideError();
   }
@@ -823,7 +853,11 @@ window.viewer = {
         }
         case 'toggle': {
           if (cmd.key === 'grid') { const c = $('opt-grid'); c.checked = !c.checked; c.dispatchEvent(new Event('change')); }
-          if (cmd.key === 'wire') { document.querySelector('#tb-shading .mode-card[data-mode="wire"]')?.click(); }
+          // 工具栏线框按钮：切到线框；已在线框则切回着色（toggle 语义）
+          if (cmd.key === 'wire' || cmd.key === 'wireframe') {
+            const target = app.shading.mode === 'wire' ? 'shaded' : 'wire';
+            document.querySelector(`#tb-shading .mode-card[data-mode="${target}"]`)?.click();
+          }
           if (cmd.key === 'autorotate') $('tb-turntable').click();
           return;
         }

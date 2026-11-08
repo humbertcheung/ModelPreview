@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // MARK: - 启动
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupAppMenu()
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
                            backing: .buffered, defer: false)
@@ -95,6 +96,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func application(_ application: NSApplication, open urls: [URL]) {
         NSLog("[MP] open event: \(urls.map(\.path))")
         for url in urls { openModel(url) }
+    }
+
+    /// 标准应用菜单：⌘Q 退出 + 编辑菜单（WKWebView 的复制/粘贴依赖它）
+    private func setupAppMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "关于 3D模型预览", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "退出 3D模型预览", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        fileItem.submenu = fileMenu
+        main.addItem(fileItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        NSApplication.shared.mainMenu = main
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -245,6 +276,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             appendMsgLog("DBG smartSize=\(body["smartSize"] as? String ?? "?")")
             for m in meshes {
                 appendMsgLog("DBG \(m["name"] as? String ?? "?") verts=\(m["verts"] ?? 0) maxDim=\(m["maxDim"] ?? "?") c=(\(m["cx"] ?? "?"),\(m["cy"] ?? "?"),\(m["cz"] ?? "?"))")
+            }
+            if let sh = body["shadow"] as? [String: Any] {
+                appendMsgLog("SHADOW \(sh)")
             }
         default:
             break

@@ -153,6 +153,8 @@ html, body {
   font-size: 9px; transition: transform 0.15s; color: var(--text-faint);
   display: inline-block; transform: rotate(0);
 }
+/* 展开 ▼ / 折叠 ▶：▶ 旋转 90° 即 ▼ */
+.card.collapsible .card-title .twist.open { transform: rotate(90deg); }
 .card.collapsible.collapsed .card-title { margin-bottom: 0; }
 .card.collapsible.collapsed .card-body { display: none; }
 
@@ -163,11 +165,11 @@ html, body {
   border-radius: 8px;
 }
 .row:hover { background: var(--bg-inset); }
-.row > label { flex: 1; font-size: 12.5px; font-weight: 500; cursor: pointer; }
-.row > label:not(.toggle) { color: var(--text); }
+/* 关键：flex:1 必须排除 .toggle，否则开关被拉伸成超宽（specificity 高于 .toggle 自身宽度） */
+.row > label:not(.toggle) { flex: 1; font-size: 12.5px; font-weight: 500; cursor: pointer; color: var(--text); }
 .row .sub { display: block; font-size: 11px; color: var(--text-dim); font-weight: 400; margin-top: 1px; }
 
-.toggle { position: relative; display: inline-block; width: 36px; height: 21px; flex-shrink: 0; vertical-align: middle; }
+.toggle { position: relative; display: inline-block; width: 36px; height: 21px; flex: 0 0 36px; vertical-align: middle; }
 .toggle input { opacity: 0; width: 0; height: 0; }
 .toggle .knob {
   position: absolute; inset: 0; border-radius: 11px;
@@ -217,11 +219,12 @@ html, body {
 .mode-card .m-sub { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; }
 
 /* ============ 滑块行 ============ */
-.slider-row { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
-.slider-row .lbl { width: 52px; font-size: 12px; color: var(--text-mid); flex-shrink: 0; }
-.slider-row .val { width: 36px; text-align: right; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; font-family: var(--font-mono); }
+/* range 必须 min-width:0：表单控件默认 min-width:auto 无法收缩到固有宽度以下，会把右侧数值挤出容器 */
+.slider-row { display: flex; align-items: center; gap: 7px; padding: 5px 0; min-width: 0; }
+.slider-row .lbl { width: 50px; font-size: 12px; color: var(--text-mid); flex-shrink: 0; }
+.slider-row .val { width: 34px; text-align: right; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; font-family: var(--font-mono); overflow: hidden; }
 input[type="range"] {
-  flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px;
+  flex: 1 1 0; min-width: 0; -webkit-appearance: none; height: 4px; border-radius: 2px;
   background: var(--border-strong); outline: none; cursor: pointer;
 }
 input[type="range"]::-webkit-slider-thumb {
@@ -392,18 +395,27 @@ input[type="range"]::-webkit-slider-thumb {
 .stats-grid .stat.wide { grid-column: span 2; }
 .stats-grid .stat.wide .stat-value { white-space: normal; font-size: 12.5px; }
 
-/* 结构树 */
+/* 结构树（侧边 Treeview 导航：行式垂直展开 + 层级缩进 + 折叠箭头） */
 #tree { font-size: 12px; max-height: 280px; overflow: auto; user-select: none; }
 #tree::-webkit-scrollbar { width: 5px; }
 #tree::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.35); border-radius: 3px; }
+/* 行 + 子级的包裹容器：保证子级永远是「新行」垂直展开，而不是行内加列 */
+.tree-item { min-width: 0; }
 .tree-row {
   display: flex; align-items: center; gap: 5px; padding: 3px 6px;
   border-radius: 6px; cursor: pointer; white-space: nowrap;
 }
 .tree-row:hover { background: var(--bg-card-hover); }
 .tree-row.selected { background: var(--accent-soft); }
-.tree-row .twist { width: 12px; text-align: center; color: var(--text-faint); font-size: 9px; flex-shrink: 0; transition: transform 0.12s; }
-.tree-row .twist.open { transform: rotate(90deg); }
+/* 折叠符号：加粗 + 折叠 / − 展开，与内容垂直中线对齐 */
+.tree-row .twist {
+  flex: 0 0 15px; width: 15px; text-align: center;
+  color: var(--text-faint); font-size: 15px; line-height: 1; font-weight: 700;
+  font-family: var(--font-mono); cursor: pointer;
+}
+.tree-row .twist:hover { color: var(--text); }
+/* 无子级：占位对齐（不可点） */
+.tree-row .twist.leaf { cursor: default; }
 .tree-row .ticon { flex-shrink: 0; opacity: 0.7; display: inline-flex; }
 .tree-row .ticon svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.5; }
 .tree-row .tname { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -411,7 +423,9 @@ input[type="range"]::-webkit-slider-thumb {
 .tree-row .eye:hover { color: var(--text); background: var(--btn-bg); }
 .tree-row .eye.off { color: var(--text-faint); opacity: 0.4; }
 .tree-row .eye svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.5; }
-.tree-children { margin-left: 13px; border-left: 1px solid var(--border); padding-left: 4px; }
+/* 子级容器：每层缩进，向下展开 */
+.tree-children { margin-left: 10px; }
+.tree-children.collapsed { display: none; }
 .tree-children.collapsed { display: none; }
 .tree-empty { color: var(--text-faint); font-size: 11px; padding: 4px; }
 

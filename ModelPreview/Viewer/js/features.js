@@ -26,7 +26,10 @@ export class ShadingManager {
         if (!o.userData.origMaterial) o.userData.origMaterial = o.material;
         const orig = o.userData.origMaterial;
         switch (this.mode) {
-          case 'normal': o.material = this.normalMat; break;
+          case 'normal':
+            if (o.geometry && !o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+            o.material = this.normalMat;
+            break;
           case 'xray': o.material = this.xrayMat; break;
           default: o.material = orig;
         }
@@ -107,8 +110,8 @@ export class Outliner {
     row.dataset.uuid = node.uuid;
 
     const twist = document.createElement('span');
-    twist.className = 'twist';
-    twist.textContent = hasChildren ? '▶' : '·';
+    twist.className = 'twist' + (hasChildren ? '' : ' leaf');
+    twist.textContent = hasChildren ? '+' : ''; // 加粗 + 折叠 / − 展开
 
     const icon = document.createElement('span');
     icon.className = 'ticon';
@@ -129,13 +132,19 @@ export class Outliner {
 
     const childrenEl = document.createElement('div');
     childrenEl.className = 'tree-children collapsed'; // 默认所有层级折叠
-    row.appendChild(childrenEl); // 子级容器必须挂到行内，否则层级树永远只有根行
+    // 子级容器必须与行「平级」（外包 tree-item）：挂在 row 内会被 flex 布局横向排列成列
+    const item = document.createElement('div');
+    item.className = 'tree-item';
+    item.appendChild(row);
+    item.appendChild(childrenEl);
 
-    twist.addEventListener('click', (e) => {
-      e.stopPropagation();
-      twist.classList.toggle('open');
-      childrenEl.classList.toggle('collapsed');
-    });
+    const toggleTwist = () => {
+      if (!hasChildren) return;
+      const nowCollapsed = childrenEl.classList.toggle('collapsed');
+      twist.textContent = nowCollapsed ? '+' : '−';
+    };
+    twist.addEventListener('click', (e) => { e.stopPropagation(); toggleTwist(); });
+    row.addEventListener('dblclick', (e) => { e.preventDefault(); toggleTwist(); }); // 双击行也可展开/折叠
     row.addEventListener('click', () => this.select(node, row, false));
     row.addEventListener('click', (e) => { if (e.metaKey || e.ctrlKey) this.select(node, row, true); }, false);
     let visible = true;
@@ -152,7 +161,7 @@ export class Outliner {
     this.rowByUuid = this.rowByUuid || {};
     this.rowByUuid[node.uuid] = row;
 
-    return { el: row, childrenEl };
+    return { el: item, childrenEl }; // el 是外层容器（行 + 子级），childrenEl 供父级挂子节点
   }
 
   select(node, row, additive) {

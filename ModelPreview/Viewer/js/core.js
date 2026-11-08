@@ -27,9 +27,10 @@ export class SceneCore {
     this.renderer.setSize(this.container.clientWidth || 800, this.container.clientHeight || 600);
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    this.renderer.autoClear = false;
+    // WebKit 实测：autoClear=false（手动 clear）会破坏 shadow map pass，保持默认 true
     this.renderer.shadowMap.enabled = true;      // 常开：材质首次编译即含阴影支持
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // WebKit(WKWebView) 实测：PCFSoftShadowMap 不渲染阴影，PCFShadowMap 正常（Chrome 两者均正常）
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.container.prepend(this.renderer.domElement);
   }
 
@@ -37,9 +38,14 @@ export class SceneCore {
     this.scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    // 环境给模型提供反射；地面的阴影对比由地面材质单独压低 envMapIntensity 保证
+    // （二分实验：scene.environment 全量作用地面时，白地面被环境照亮到接近满白，阴影对比 <8% 不可见）
+    this.scene.environmentIntensity = 0.45;
     pmrem.dispose();
 
-    this.keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    // 强度 3.0：环境光贡献压到 0.2 后主光取 3 保证模型亮度与阴影对比
+    // （二分实验证实：toneMapping+env 下 1.1 的直射光阴影对比 <10%，视觉不可见）
+    this.keyLight = new THREE.DirectionalLight(0xffffff, 3.0);
     this.keyLight.position.set(4, 8, 5);
     this.keyLight.castShadow = true; // 常开：开关只切换接收面显示，避免材质重编译闪烁
     this.keyLight.shadow.bias = -0.0005;
@@ -161,6 +167,26 @@ export class SceneCore {
     this.controls.target.copy(center);
     if (this.camKind === 'ortho') this.setCameraKind('persp');
     this.controls.update();
+    this.fitShadowCamera(box); // 阴影视锥必须随模型适配，否则大模型永远在 ±5 默认视锥外 → 无投影
+  }
+
+  /** 让平行光与阴影相机包裹整个模型：光源在模型斜上方，正交阴影范围 = 模型半径 */
+  fitShadowCamera(box) {
+    const light = this.keyLight;
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() * 0.62, 1); // 包围球半径（略余量）
+    const dir = new THREE.Vector3(0.5, 1.15, 0.65).normalize(); // 固定采光方向：右上前
+    light.position.copy(center).addScaledVector(dir, radius * 2.2);
+    light.target.position.copy(center);
+    light.target.updateMatrixWorld();
+    const cam = light.shadow.camera;
+    cam.left = -radius; cam.right = radius; cam.top = radius; cam.bottom = -radius;
+    cam.near = 0.1; cam.far = radius * 5;
+    cam.updateProjectionMatrix();
+    if (light.shadow.mapSize.width < 2048) light.shadow.mapSize.set(2048, 2048);
+    if (light.shadow.map) { light.shadow.map.dispose(); light.shadow.map = null; } // 强制下一帧重建阴影贴图
+    light.shadow.bias = -0.0005;
   }
 
   /** 视角快照 */
@@ -345,7 +371,8 @@ export class SceneCore {
     if (this.generatedGround) return;
     this.generatedGround = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshStandardMaterial({ color: this.groundColor, roughness: 0.95, metalness: 0 })
+      // envMapIntensity 0.12：地面几乎只吃主光，阴影处不被环境填亮，投影对比清晰且不死黑
+      new THREE.MeshStandardMaterial({ color: this.groundColor, roughness: 0.95, metalness: 0, envMapIntensity: 0.12 })
     );
     this.generatedGround.rotation.x = -Math.PI / 2;
     this.generatedGround.receiveShadow = true;
@@ -428,22 +455,27 @@ export class SceneCore {
   }
   setShadowVisible(v) {
     this.shadowVisible = v;
-    this.renderer.shadowMap.enabled = true; // 常开
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.keyLight.castShadow = true;        // 常开：始终投影，开关只控制接收面
-    // 接收面：系统地面板（可见时）或模型自带地面/模型本身
+    // 光与 shadowMap 常开：避免灯光列表变化引发全场景材质重编译（闪烁根源）
+    this.keyLight.castShadow = true;
     for (const m of this.models) {
       m.root.traverse(o => {
-        if (o.isMesh) {
+        if (!o.isMesh) return;
+        if (!o.userData.shadowInit) {
+          // castShadow 首次置位：仅此一次重编译材质，后续开关零重编译（防闪烁）
+          o.userData.shadowInit = true;
           o.castShadow = true;
-          if (!o.userData.receiveShadowSet) { o.receiveShadow = true; o.userData.receiveShadowSet = true; }
+          (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => { if (mt) mt.needsUpdate = true; });
         }
+        o.receiveShadow = v; // 开关语义 = 是否接收阴影（地面板同理由下方切换）
       });
     }
     if (this.generatedGround) {
-      this.generatedGround.receiveShadow = true;
+      this.generatedGround.receiveShadow = v;
       this.placeGround(); // 高度偏移可能变化，重新定位
     }
+    // 视锥适配：开关/合并/切换模型后阴影相机始终包裹当前模型
+    const box = this.smartBoundingBox();
+    if (box && !box.isEmpty()) this.fitShadowCamera(box);
     this.syncGridHeight();
   }
 
@@ -459,7 +491,6 @@ export class SceneCore {
       const delta = this.clock.getDelta();
       this.controls.update();
       if (onFrame) onFrame(delta);
-      this.renderer.clear();
       this.renderer.render(this.scene, this.active);
     };
     loop();

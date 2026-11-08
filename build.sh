@@ -42,6 +42,7 @@ swiftc -O -swift-version 5 -module-name QuickLookExtension \
 
 echo "==> 复制扩展资源"
 ditto "$VIEWER" "$APPEX/Contents/Resources/Viewer"
+rm -f "$APPEX/Contents/Resources/Viewer/shadow-test.html" # 测试页不进包
 cp "$RES/Info-Appex.plist" "$APPEX/Contents/Info.plist"
 
 echo "==> 编译主应用"
@@ -60,6 +61,7 @@ swiftc -O -swift-version 5 -module-name ModelPreview \
 
 echo "==> 复制主应用资源"
 ditto "$VIEWER" "$APP/Contents/Resources/Viewer"
+rm -f "$APP/Contents/Resources/Viewer/shadow-test.html"
 cp "$RES/Info-App.plist" "$APP/Contents/Info.plist"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 

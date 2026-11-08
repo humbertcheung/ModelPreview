@@ -25,6 +25,12 @@ function managerWithTGA(onMissingAsset) {
 
 /** 加载任意支持的格式，返回 { root, animations, warnings } */
 export async function loadModelFile(url, ext, opts = {}) {
+  const r = await loadModelFileInner(url, ext, opts);
+  if (r?.root) ensureNormals(r.root); // 缺法线的模型（法线模式黑面/PBR 光照异常）统一补平滑法线
+  return r;
+}
+
+async function loadModelFileInner(url, ext, opts = {}) {
   const warnings = [];
   const onMissing = (u) => warnings.push(`缺少资源：${String(u).split('/').pop()}`);
   const mgr = managerWithTGA(onMissing);
@@ -115,58 +121,71 @@ export function defaultMat(vertexColors) {
   });
 }
 
+/** 某些导出链（如部分 CAD→GLB）不带法线，法线模式/PBR 光照都会渲染成黑面，统一补平滑法线 */
+function ensureNormals(root) {
+  root.traverse(o => {
+    if (o.isMesh && o.geometry && !o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+  });
+}
+
 /** 内存加载（QL base64 分块 / 快速路径），返回 { root, animations, warnings } */
 export function loadFromBuffer(buf, ext) {
   const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   const decodeText = (u8) => new TextDecoder('utf-8').decode(u8);
   const warnings = [];
-  switch (ext) {
-    case 'glb': {
-      return new Promise((resolve, reject) => {
-        const loader = new GLTFLoader();
-        const draco = new DRACOLoader();
-        draco.setDecoderPath('./lib/addons/libs/draco/gltf/');
-        loader.setDRACOLoader(draco);
-        loader.parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), '',
-          (gltf) => { draco.dispose(); resolve({ root: gltf.scene, animations: gltf.animations || [], warnings }); },
-          (err) => { draco.dispose(); reject(new Error(`GLB 解析失败：${err?.message || err}`)); });
-      });
+  const run = () => {
+    switch (ext) {
+      case 'glb': {
+        return new Promise((resolve, reject) => {
+          const loader = new GLTFLoader();
+          const draco = new DRACOLoader();
+          draco.setDecoderPath('./lib/addons/libs/draco/gltf/');
+          loader.setDRACOLoader(draco);
+          loader.parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), '',
+            (gltf) => { draco.dispose(); resolve({ root: gltf.scene, animations: gltf.animations || [], warnings }); },
+            (err) => { draco.dispose(); reject(new Error(`GLB 解析失败：${err?.message || err}`)); });
+        });
+      }
+      case 'gltf':
+        return new Promise((resolve, reject) => {
+          new GLTFLoader().parse(decodeText(u8), '',
+            (gltf) => resolve({ root: gltf.scene, animations: gltf.animations || [], warnings }),
+            () => reject(new Error('GLTF 引用了外部资源（.bin/贴图），快速预览无法加载，请在主应用中打开')));
+        });
+      case 'obj': {
+        const obj = new OBJLoader().parse(decodeText(u8));
+        obj.traverse(o => { if (o.isMesh) { o.material = defaultMat(!!o.geometry?.attributes?.color); o.material.side = THREE.DoubleSide; } });
+        return { root: obj, animations: [], warnings };
+      }
+      case 'stl': {
+        const geo = new STLLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        return { root: new THREE.Mesh(geo, defaultMat(!!geo.attributes.color)), animations: [], warnings };
+      }
+      case 'ply': {
+        const geo = new PLYLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        return { root: new THREE.Mesh(geo, defaultMat(!!geo.attributes.color || geo.hasColors)), animations: [], warnings };
+      }
+      case 'fbx': {
+        const fbx = new FBXLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), '');
+        return { root: fbx, animations: fbx.animations || [], warnings };
+      }
+      case 'dae': {
+        const res = new ColladaLoader().parse(decodeText(u8), '');
+        res.scene.traverse(o => { if (o.isMesh && o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.side = THREE.DoubleSide); });
+        return { root: res.scene, animations: res.scene?.animations || res.animations || [], warnings };
+      }
+      case '3mf':
+        return { root: new ThreeMFLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)), animations: [], warnings };
+      default:
+        throw new Error(`不支持的格式：.${ext}`);
     }
-    case 'gltf':
-      return new Promise((resolve, reject) => {
-        new GLTFLoader().parse(decodeText(u8), '',
-          (gltf) => resolve({ root: gltf.scene, animations: gltf.animations || [], warnings }),
-          () => reject(new Error('GLTF 引用了外部资源（.bin/贴图），快速预览无法加载，请在主应用中打开')));
-      });
-    case 'obj': {
-      const obj = new OBJLoader().parse(decodeText(u8));
-      obj.traverse(o => { if (o.isMesh) { o.material = defaultMat(!!o.geometry?.attributes?.color); o.material.side = THREE.DoubleSide; } });
-      return { root: obj, animations: [], warnings };
-    }
-    case 'stl': {
-      const geo = new STLLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
-      if (!geo.attributes.normal) geo.computeVertexNormals();
-      return { root: new THREE.Mesh(geo, defaultMat(!!geo.attributes.color)), animations: [], warnings };
-    }
-    case 'ply': {
-      const geo = new PLYLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
-      if (!geo.attributes.normal) geo.computeVertexNormals();
-      return { root: new THREE.Mesh(geo, defaultMat(!!geo.attributes.color || geo.hasColors)), animations: [], warnings };
-    }
-    case 'fbx': {
-      const fbx = new FBXLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), '');
-      return { root: fbx, animations: fbx.animations || [], warnings };
-    }
-    case 'dae': {
-      const res = new ColladaLoader().parse(decodeText(u8), '');
-      res.scene.traverse(o => { if (o.isMesh && o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.side = THREE.DoubleSide); });
-      return { root: res.scene, animations: res.scene?.animations || res.animations || [], warnings };
-    }
-    case '3mf':
-      return { root: new ThreeMFLoader().parse(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)), animations: [], warnings };
-    default:
-      throw new Error(`不支持的格式：.${ext}`);
-  }
+  };
+  return Promise.resolve(run()).then((r) => {
+    if (r?.root) ensureNormals(r.root);
+    return r;
+  });
 }
 
 /** 场景统计 */

@@ -100,10 +100,10 @@
         <div class="slider-row" id="ground-height-row" style="display:none"><span class="lbl">地面高度</span><input type="range" id="sl-ground-h" min="-20" max="60" value="0"><span class="val" id="v-ground-h">0</span></div>
         <div class="row" style="margin-top:6px"><span style="font-size:11.5px;color:var(--text-dim)">地面颜色</span></div>
         <div class="swatches" id="ground-colors">
-          <button class="gswatch" data-c="#f2f3f5" style="background:#f2f3f5" title="雪地 / 白"></button>
+          <button class="gswatch active" data-c="#f2f3f5" style="background:#f2f3f5" title="雪地 / 白"></button>
           <button class="gswatch" data-c="#6f9e58" style="background:#6f9e58" title="草地"></button>
           <button class="gswatch" data-c="#dcc9a0" style="background:#dcc9a0" title="沙地"></button>
-          <button class="gswatch active" data-c="#454a52" style="background:#454a52" title="公路（沥青）"></button>
+          <button class="gswatch" data-c="#454a52" style="background:#454a52" title="公路（沥青）"></button>
           <button class="gswatch" data-c="#b8b6ae" style="background:#b8b6ae" title="混凝土"></button>
           <button class="gswatch" data-c="#26282e" style="background:#26282e" title="深色"></button>
         </div>
@@ -137,14 +137,14 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">渲染调节</div>
+        <div class="card-title">渲染调节 <button class="mini-btn" id="render-reset" title="恢复默认（曝光 1.0 / 环境 1.0）">重置</button></div>
         <div class="slider-row"><span class="lbl">曝光</span><input type="range" id="sl-exposure" min="20" max="250" value="100"><span class="val" id="v-exposure">1.0</span></div>
-        <div class="slider-row"><span class="lbl">环境</span><input type="range" id="sl-env" min="0" max="250" value="100"><span class="val" id="v-env">1.0</span></div>
+        <div class="slider-row"><span class="lbl">环境</span><input type="range" id="sl-env" min="0" max="250" value="20"><span class="val" id="v-env">0.2</span></div>
       </div>
       <div class="card collapsible collapsed" id="ql-settings-card">
         <div class="card-title" id="ql-settings-toggle" title="展开 / 折叠">空格预览设置 <span class="twist" id="ql-settings-twist">▶</span></div>
         <div class="card-body">
-        <div class="row"><label for="set-ql-ground">无地面模型自动补地面</label><label class="toggle"><input type="checkbox" id="set-ql-ground" checked><span class="knob"></span></label></div>
+        <div class="row"><label for="set-ql-ground" title="无地面模型自动补地面">自动补地面</label><label class="toggle"><input type="checkbox" id="set-ql-ground" checked><span class="knob"></span></label></div>
         <div class="row"><span style="font-size:11.5px;color:var(--text-dim)">补地面颜色</span></div>
         <div class="swatches" id="ql-ground-colors">
           <button class="gswatch active" data-c="#ffffff" style="background:#ffffff" title="白"></button>

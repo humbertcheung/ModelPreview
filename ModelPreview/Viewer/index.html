@@ -40,13 +40,6 @@
       </button>
     </div>
     <div class="tb-sep"></div>
-    <div class="tb-group" id="tb-shading">
-      <button class="tbtn text active" data-mode="shaded" title="着色模式：PBR 实体渲染">着色</button>
-      <button class="tbtn text" data-mode="normal" title="法线模式：按顶点法线显示表面朝向">法线</button>
-      <button class="tbtn text" data-mode="wire" title="线框模式">线框</button>
-      <button class="tbtn text" data-mode="xray" title="X 光模式：半透明透视显示">X 光</button>
-    </div>
-    <div class="tb-sep"></div>
     <div class="tb-group">
       <button class="tbtn" id="tb-snapshot" title="保存当前视角快照（可在右侧面板恢复）">
         <svg viewBox="0 0 24 24"><path d="M5 4h11l3 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M9 13l2 2 4-4"/></svg>
@@ -79,6 +72,24 @@
   <div id="main">
     <!-- 左面板：显示 / 背景 / 后处理 -->
     <aside id="left-panel" class="panel">
+      <div class="panel-scroll">
+      <div class="card">
+        <div class="card-title">渲染模式</div>
+        <div class="mode-grid" id="tb-shading">
+          <button class="mode-card active" data-mode="shaded" title="PBR 实体渲染">
+            <div class="m-title">着色</div><div class="m-sub">PBR 实体</div>
+          </button>
+          <button class="mode-card" data-mode="normal" title="顶点法线显示">
+            <div class="m-title">法线</div><div class="m-sub">Normals</div>
+          </button>
+          <button class="mode-card" data-mode="wire" title="线框显示">
+            <div class="m-title">线框</div><div class="m-sub">Wireframe</div>
+          </button>
+          <button class="mode-card" data-mode="xray" title="X 光透视">
+            <div class="m-title">X 光</div><div class="m-sub">X-Ray</div>
+          </button>
+        </div>
+      </div>
       <div class="card">
         <div class="card-title">显示</div>
         <div class="row"><label for="opt-ground">地面</label><label class="toggle"><input type="checkbox" id="opt-ground"><span class="knob"></span></label></div>
@@ -86,6 +97,7 @@
         <div class="row"><label for="opt-axes">坐标轴</label><label class="toggle"><input type="checkbox" id="opt-axes"><span class="knob"></span></label></div>
         <div class="row"><label for="opt-shadow">地面阴影</label><label class="toggle"><input type="checkbox" id="opt-shadow"><span class="knob"></span></label></div>
         <div class="row"><label for="opt-edges">边界边</label><label class="toggle"><input type="checkbox" id="opt-edges"><span class="knob"></span></label></div>
+        <div class="slider-row" id="ground-height-row" style="display:none"><span class="lbl">地面高度</span><input type="range" id="sl-ground-h" min="-20" max="60" value="0"><span class="val" id="v-ground-h">0</span></div>
         <div class="row" style="margin-top:6px"><span style="font-size:11.5px;color:var(--text-dim)">地面颜色</span></div>
         <div class="swatches" id="ground-colors">
           <button class="gswatch" data-c="#f2f3f5" style="background:#f2f3f5" title="雪地 / 白"></button>
@@ -143,6 +155,7 @@
         <div style="font-size:10.5px;color:var(--text-faint);line-height:1.5;margin-top:4px">以上设置对「选中预览 / 空格预览」生效，保存在本机。</div>
         </div>
       </div>
+      </div>
     </aside>
 
     <!-- 视口 -->
@@ -164,6 +177,7 @@
 
     <!-- 右面板：信息 / 统计 / 结构树 / 快照 -->
     <aside id="right-panel" class="panel">
+      <div class="panel-scroll">
       <div id="file-section" class="card hidden">
         <div id="file-name">—</div>
         <div id="file-meta"><span id="file-format" class="badge">—</span><span id="file-size">—</span></div>
@@ -188,8 +202,18 @@
         <div class="card-title">视角快照 <button class="mini-btn" id="snap-save" title="保存当前相机视角">＋ 保存当前</button></div>
         <div id="snap-list"><div class="tree-empty">暂无快照</div></div>
       </div>
+      </div>
     </aside>
   </div>
+
+  <!-- ============ 状态栏 ============ -->
+  <footer id="statusbar">
+    <span id="sb-ground" style="display:none"></span>
+    <span id="sb-stats">— tris · — meshes</span>
+    <span class="sb-spacer"></span>
+    <span id="sb-hint">drag to rotate · scroll to zoom · click to select</span>
+  </footer>
+  <div id="ground-note-el" style="display:none"></div>
 
   <!-- ============ 动画条 ============ -->
   <footer id="animbar">

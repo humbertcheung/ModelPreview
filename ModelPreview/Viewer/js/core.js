@@ -363,7 +363,14 @@ export class SceneCore {
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const gridSize = maxDim * 4; // 与网格面积一致
     this.generatedGround.scale.set(gridSize, gridSize, 1);
-    this.generatedGround.position.set(center.x, box.min.y - maxDim * 0.001, center.z);
+    this.generatedGround.position.set(center.x, box.min.y - maxDim * 0.001 + (this.groundHeightOffset || 0), center.z);
+  }
+
+  /** 地面高度偏移（模型单位） */
+  setGroundHeightOffset(v) {
+    this.groundHeightOffset = v;
+    this.placeGround();
+    this.syncGridHeight();
   }
 
   setGroundColor(hex, forceGenerated = false) {

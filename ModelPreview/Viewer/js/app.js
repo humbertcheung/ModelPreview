@@ -132,6 +132,20 @@ class App {
     $('opt-axes').addEventListener('change', e => this.core.setAxesVisible(e.target.checked));
     $('opt-shadow').addEventListener('change', e => this.core.setShadowVisible(e.target.checked));
     $('opt-edges').addEventListener('change', e => this.shading.setEdges(e.target.checked, this.core.models, this.core.theme));
+    $('sl-ground-h').addEventListener('input', e => {
+      const v = +e.target.value;
+      $('v-ground-h').textContent = (v / 10).toFixed(1);
+      this.core.setGroundHeightOffset(v / 10);
+    });
+    // 有/无系统地面 → 高度滑块显隐
+    const syncGroundRow = () => {
+      const hasGenerated = this.core.groundMode === 'generated' && this.core.generatedGround;
+      $('ground-height-row').style.display = hasGenerated ? 'flex' : 'none';
+    };
+    $('opt-ground').addEventListener('change', syncGroundRow);
+    document.querySelectorAll('#ground-colors .gswatch').forEach(b => {
+      const origHandler = b.addEventListener;
+    });
     for (const btn of document.querySelectorAll('#view-presets button')) {
       btn.addEventListener('click', () => {
         this.core.setPresetView(btn.dataset.v);
@@ -349,7 +363,7 @@ class App {
       $('animbar').classList.remove('visible');
     }
 
-    this.refreshStats();
+    this.refreshStats(opts.size);
     this.outliner.build(this.core.models);
     if (this.shading.mode !== 'shaded' || this.shading.wireframe) this.shading.apply(this.core.models, this.core.theme);
     if (this.shading.edges) this.shading.setEdges(true, this.core.models, this.core.theme);
@@ -428,7 +442,7 @@ class App {
     document.getElementById('tb-cam-kind').disabled = !has;
   }
 
-  refreshStats() {
+  refreshStats(sizeBytes) {
     const st = this.core.models.length ? computeStats(this.core.models[0].root, this.core.models.slice(1)) : null;
     const fmt = (v) => v == null ? '—' : v >= 1e6 ? (v / 1e6).toFixed(2) + ' M' : v >= 1e3 ? (v / 1e3).toFixed(1) + ' k' : String(v);
     let sizeText = '—';
@@ -450,6 +464,10 @@ class App {
     $('st-materials').textContent = st ? String(st.materials) : '—';
     $('st-size').textContent = sizeText;
     $('st-animations').textContent = String(this.anim.clips.length);
+    // 底部状态栏（等宽统计，3DMate 风格）
+    $('sb-stats').textContent = st
+      ? `${fmt(st.triangles)} tris · ${st.meshes} meshes · ${this.fmtBytes(sizeBytes)}`
+      : '— tris · — meshes';
     this.updateButtonStates();
   }
 
@@ -639,23 +657,13 @@ class App {
   }
 
   showGroundNote(text) {
-    let el = document.getElementById('ground-note');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'ground-note';
-      Object.assign(el.style, {
-        position: 'absolute', left: '14px', bottom: '12px', zIndex: '15',
-        padding: '4px 10px', borderRadius: '6px', pointerEvents: 'none',
-        background: 'var(--bg-panel-solid)', border: '1px solid var(--border)',
-        color: 'var(--text-dim)', fontSize: '11px',
-      });
-      this.core.container.appendChild(el);
-    }
-    el.textContent = text;
-    el.style.display = 'block';
+    const el = document.getElementById('sb-ground');
+    if (!el) return;
+    el.textContent = 'ⓖ ' + text;
+    el.style.display = '';
   }
   hideGroundNote() {
-    const el = document.getElementById('ground-note');
+    const el = document.getElementById('sb-ground');
     if (el) el.style.display = 'none';
   }
 

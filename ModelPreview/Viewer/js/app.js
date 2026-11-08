@@ -90,13 +90,13 @@ class App {
     $('tb-left-panel').addEventListener('click', () => {
       const p = $('left-panel');
       const show = p.style.display === 'none';
-      p.style.display = show ? 'block' : 'none';
+      p.style.display = show ? '' : 'none';
       $('tb-left-panel').classList.toggle('active', show);
     });
     $('tb-right-panel').addEventListener('click', () => {
       const p = $('right-panel');
       const show = p.style.display === 'none';
-      p.style.display = show ? 'block' : 'none';
+      p.style.display = show ? '' : 'none';
       $('tb-right-panel').classList.toggle('active', show);
     });
     $('tb-shot').addEventListener('click', () => this.screenshot());
@@ -437,7 +437,10 @@ class App {
       for (const m of this.core.models) box.expandByObject(m.root);
       if (!box.isEmpty()) {
         const s = box.getSize(new THREE.Vector3());
-        const f = (x) => !isFinite(x) ? '—' : x.toFixed(2);
+        const f = (x) => {
+          if (!isFinite(x)) return '—';
+          return (Math.round(x * 100) / 100).toString(); // 去尾 0：1.10→1.1、2.00→2
+        };
         sizeText = `${f(s.x)} × ${f(s.y)} × ${f(s.z)}`;
       }
     }

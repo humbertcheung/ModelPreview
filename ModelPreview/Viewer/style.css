@@ -130,8 +130,8 @@ html, body {
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) transparent;
 }
-#left-panel { border-right: 1px solid var(--border); }
-#right-panel { border-left: 1px solid var(--border); width: 250px; }
+#left-panel { border-right: 1px solid var(--border); width: 244px; max-width: 244px; min-width: 244px; }
+#right-panel { border-left: 1px solid var(--border); width: 250px; max-width: 250px; min-width: 250px; }
 .panel::-webkit-scrollbar { width: 8px; }
 .panel::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
 

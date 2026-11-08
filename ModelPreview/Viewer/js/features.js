@@ -107,7 +107,7 @@ export class Outliner {
     row.dataset.uuid = node.uuid;
 
     const twist = document.createElement('span');
-    twist.className = 'twist' + (hasChildren ? ' open' : '');
+    twist.className = 'twist';
     twist.textContent = hasChildren ? '▶' : '·';
 
     const icon = document.createElement('span');
@@ -128,7 +128,7 @@ export class Outliner {
     row.appendChild(twist); row.appendChild(icon); row.appendChild(name); row.appendChild(eye);
 
     const childrenEl = document.createElement('div');
-    childrenEl.className = 'tree-children';
+    childrenEl.className = 'tree-children collapsed'; // 默认所有层级折叠
     row.appendChild(childrenEl); // 子级容器必须挂到行内，否则层级树永远只有根行
 
     twist.addEventListener('click', (e) => {

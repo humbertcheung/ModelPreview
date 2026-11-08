@@ -543,7 +543,6 @@ class App {
     const savedGrid = this.core.gridVisible;
     if (this.core.grid) this.core.grid.visible = false;
     if (this.core.axes) this.core.axes.visible = false;
-    if (this.core.shadowPlane) this.core.shadowPlane.visible = false;
     const savedBg = this.core.scene.background;
     if (this.transparentShot) this.core.scene.background = null;
 
@@ -559,7 +558,6 @@ class App {
     this.core.scene.background = savedBg;
     if (this.core.grid) this.core.grid.visible = savedGrid;
     if (this.core.axes) this.core.axes.visible = this.core.axesVisible;
-    if (this.core.shadowPlane) this.core.shadowPlane.visible = this.core.shadowVisible;
     this.core.renderer.render(this.core.scene, this.core.active);
 
     const name = (this.currentName || 'model').replace(/\.[^.]+$/, '') + '.png';

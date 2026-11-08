@@ -48,7 +48,6 @@ export class SceneCore {
 
     this.grid = null;
     this.axes = null;
-    this.shadowPlane = null;
     this.gridVisible = true;
     this.axesVisible = false;
     this.shadowVisible = false;
@@ -363,7 +362,7 @@ export class SceneCore {
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const gridSize = maxDim * 4; // 与网格面积一致
     this.generatedGround.scale.set(gridSize, gridSize, 1);
-    this.generatedGround.position.set(center.x, box.min.y - maxDim * 0.001 + (this.groundHeightOffset || 0), center.z);
+    this.generatedGround.position.set(center.x, box.min.y - maxDim * 0.01 + (this.groundHeightOffset || 0), center.z);
   }
 
   /** 地面高度偏移（模型单位） */
@@ -429,42 +428,23 @@ export class SceneCore {
   }
   setShadowVisible(v) {
     this.shadowVisible = v;
+    this.renderer.shadowMap.enabled = true; // 常开
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.shadowMap.enabled = true; // 常开（开销小），切换开关只控制灯与地面
-    this.keyLight.castShadow = v;
-    const useGroundPlane = this.generatedGround && this.generatedGround.visible;
-    if (this.shadowPlane && (useGroundPlane || !v)) this.shadowPlane.visible = false;
-    if (v) {
-      this.keyLight.shadow.mapSize.set(2048, 2048);
-      const d = this.currentMaxDim() * 2; // 范围加倍，确保覆盖地面板
-      Object.assign(this.keyLight.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 0.01, far: d * 10 });
-      this.keyLight.shadow.camera.updateProjectionMatrix();
-      this.keyLight.shadow.bias = -0.0005;
-      if (!this.shadowPlane) {
-        this.shadowPlane = new THREE.Mesh(
-          new THREE.PlaneGeometry(1, 1),
-          new THREE.ShadowMaterial({ opacity: 0.35 })
-        );
-        this.shadowPlane.rotation.x = -Math.PI / 2;
-        this.shadowPlane.receiveShadow = true;
-        this.scene.add(this.shadowPlane);
-      }
-      const box = new THREE.Box3();
-      for (const m of this.models) box.expandByObject(m.root);
-      if (!box.isEmpty()) {
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-        this.shadowPlane.scale.set(size.x * 6, size.z * 6, 1);
-        this.shadowPlane.position.set(center.x, box.min.y - this.currentMaxDim() * 0.001, center.z);
-      }
-      for (const m of this.models) m.root.traverse(o => { if (o.isMesh) o.castShadow = true; });
-      this.syncGridHeight();
-    } else if (this.shadowPlane) {
-      this.shadowPlane.visible = false;
+    this.keyLight.castShadow = true;        // 常开：始终投影，开关只控制接收面
+    // 接收面：系统地面板（可见时）或模型自带地面/模型本身
+    for (const m of this.models) {
+      m.root.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          if (!o.userData.receiveShadowSet) { o.receiveShadow = true; o.userData.receiveShadowSet = true; }
+        }
+      });
     }
-    if (this.shadowPlane) this.shadowPlane.visible = v;
-    // 材质需要重新编译以支持阴影
-    for (const m of this.models) m.root.traverse(o => { if (o.isMesh && o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(mt => mt.needsUpdate = true); });
+    if (this.generatedGround) {
+      this.generatedGround.receiveShadow = true;
+      this.placeGround(); // 高度偏移可能变化，重新定位
+    }
+    this.syncGridHeight();
   }
 
   setExposure(v) { this.renderer.toneMappingExposure = v; }

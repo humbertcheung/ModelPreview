@@ -14,3 +14,4 @@ build/
 # Swift 构建临时产物
 *.o
 .build/
+.bak.*

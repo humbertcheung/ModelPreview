@@ -76,12 +76,12 @@ class App {
       this.core.controls.autoRotate = this.core.turntableWanted;
       $('tb-turntable').classList.toggle('active', this.core.turntableWanted);
     });
-    for (const btn of document.querySelectorAll('#tb-shading .tbtn')) {
+    for (const btn of document.querySelectorAll('#tb-shading .mode-card')) {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('#tb-shading .tbtn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#tb-shading .mode-card').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.shading.setMode(btn.dataset.mode, this.core.models, this.core.theme);
-        this.toast(`渲染模式：${btn.textContent}`, 1500);
+        this.toast(`渲染模式：${btn.querySelector('.m-title')?.textContent || btn.dataset.mode}`, 1500);
       });
     }
     $('tb-snapshot').addEventListener('click', () => this.saveSnapshot());
@@ -114,6 +114,19 @@ class App {
     });
     $('bg-reset').addEventListener('click', () => { this.core.groundMode = 'auto'; });
     this.bindQlSettings();
+    // 左右面板显示/关闭
+    $('tb-left-panel').addEventListener('click', () => {
+      const p = $('left-panel');
+      const show = p.style.display === 'none';
+      p.style.display = show ? '' : 'none';
+      $('tb-left-panel').classList.toggle('active', show);
+    });
+    $('tb-right-panel').addEventListener('click', () => {
+      const p = $('right-panel');
+      const show = p.style.display === 'none';
+      p.style.display = show ? '' : 'none';
+      $('tb-right-panel').classList.toggle('active', show);
+    });
     // 空格预览设置：展开/折叠（默认折叠）
     $('ql-settings-toggle').addEventListener('click', () => {
       const card = $('ql-settings-card');
@@ -436,7 +449,7 @@ class App {
     const ids = ['tb-reset-view', 'tb-snapshot', 'tb-export-glb', 'tb-shot', 'tb-reset-scene'];
     for (const id of ids) $(id).disabled = !has;
     document.querySelectorAll('#view-presets button').forEach(b => b.disabled = !has);
-    document.querySelectorAll('#tb-shading .tbtn').forEach(b => b.disabled = !has);
+    document.querySelectorAll('#tb-shading .mode-card').forEach(b => b.disabled = !has);
     const optIds = ['opt-grid', 'opt-axes', 'opt-shadow', 'opt-edges', 'opt-transparent-shot'];
     for (const id of optIds) $(id).disabled = !has;
     document.getElementById('tb-cam-kind').disabled = !has;
@@ -810,7 +823,7 @@ window.viewer = {
         }
         case 'toggle': {
           if (cmd.key === 'grid') { const c = $('opt-grid'); c.checked = !c.checked; c.dispatchEvent(new Event('change')); }
-          if (cmd.key === 'wire') { document.querySelector('#tb-shading [data-mode="wire"]')?.click(); }
+          if (cmd.key === 'wire') { document.querySelector('#tb-shading .mode-card[data-mode="wire"]')?.click(); }
           if (cmd.key === 'autorotate') $('tb-turntable').click();
           return;
         }

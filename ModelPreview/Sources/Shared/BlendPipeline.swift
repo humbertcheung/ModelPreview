@@ -1,5 +1,25 @@
 import Foundation
 import CryptoKit
+import Darwin
+
+/// 线程安全容器：后台线程写、主线程读（Swift 6 并发检查友好）
+final class Atomic<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T
+    init(_ v: T) { value = v }
+    var get: T { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ v: T) { lock.lock(); value = v; lock.unlock() }
+}
+
+/// 兜底持有仍存活的 Process：Process 在运行中被释放时，
+/// macOS 27 新 Foundation 会在内部任务 dealloc 时抛 ObjC 异常（Swift 无法捕获 → abort）。
+enum ProcessKeepAlive {
+    private static let lock = NSLock()
+    private static var list: [Process] = []
+    static func keep(_ p: Process) {
+        lock.lock(); list.append(p); lock.unlock()
+    }
+}
 
 /// .blend 文件预览支持：借助本机安装的 Blender 无头转换为 GLB，并按 (路径|大小|mtime) 缓存。
 enum BlendPipeline {
@@ -120,10 +140,10 @@ enum BlendPipeline {
         process.executableURL = blender
         process.arguments = ["-b", "--factory-startup", blendURL.standardizedFileURL.path,
                              "--python-expr", expr]
-        var stderrData = Data()
+        let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        process.standardOutput = Pipe()
 
         let done = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in done.signal() }
@@ -134,31 +154,75 @@ enum BlendPipeline {
             throw BlendError.failed("无法启动 Blender：\(error.localizedDescription)")
         }
 
-        // 后台收集 stderr
-        let stderrQueue = DispatchQueue.global(qos: .utility)
-        stderrQueue.async { stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile() }
+        // 关键：stdout / stderr 必须同时被读取。管道缓冲区仅 64KB，
+        // 若不读取，Blender 输出超过缓冲后会被永久阻塞（转换假死直到看门狗杀进程）。
+        let outBox = Atomic(Data())
+        let errBox = Atomic(Data())
+        let ioGroup = DispatchGroup()
+        ioGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            outBox.set(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+            ioGroup.leave()
+        }
+        ioGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errBox.set(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+            ioGroup.leave()
+        }
 
         // 超时看门狗
+        let timedOut = Atomic(false)
         let watchdog = DispatchWorkItem {
             if process.isRunning {
+                timedOut.set(true)
                 process.terminate()
             }
         }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: watchdog)
 
-        _ = done.wait(timeout: .now() + timeout + 5)
+        let finished = done.wait(timeout: .now() + timeout + 5) == .success
+        if !finished {
+            watchdog.cancel()
+            if process.isRunning {
+                timedOut.set(true)
+                process.terminate() // SIGTERM
+                if done.wait(timeout: .now() + 5) != .success, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL) // 不响应 SIGTERM 时强杀
+                    _ = done.wait(timeout: .now() + 5)
+                }
+            }
+        }
         watchdog.cancel()
 
-        let status = process.terminationStatus
-        if status != 0 || !fm.fileExists(atPath: tmp.path) {
+        // 回收子进程：必须 waitUntilExit，否则 Process 释放时内部任务尚未回收，
+        // macOS 27 的新 Foundation 会在任务 dealloc 时抛 ObjC 异常（Swift 无法捕获 → abort）。
+        if process.isRunning {
+            ProcessKeepAlive.keep(process) // 仍在运行：交由此处持有，杜绝「运行中被释放」这一崩溃类别
+        } else {
+            process.waitUntilExit()
+        }
+        _ = ioGroup.wait(timeout: .now() + 5) // 管道读完（带上限，避免子进程遗留导致永久等待）
+
+        // 注意：此处刻意不读取 process.terminationStatus / terminationReason。
+        // macOS 27 上该 getter 在任务状态异常时会抛 ObjC 异常（Swift do/catch 无法捕获 → 进程崩溃），
+        // 崩溃报告：-[NSConcreteTask terminationStatus] → objc_exception_throw → abort。
+        // 转换成功与否以「输出文件」为准（功能上的真实判据），错误信息取自 Blender 输出。
+        let outAttrs = try? fm.attributesOfItem(atPath: tmp.path)
+        let outSize = (outAttrs?[.size] as? NSNumber)?.int64Value ?? 0
+        let produced = fm.fileExists(atPath: tmp.path) && outSize > 0
+        if !produced {
             try? fm.removeItem(at: tmp) // 清理半途残留
-            let detail = String(data: stderrData, encoding: .utf8)?
+            let text = (String(data: errBox.get, encoding: .utf8) ?? "") + "\n" + (String(data: outBox.get, encoding: .utf8) ?? "")
+            let detail = text
                 .split(separator: "\n")
-                .filter { $0.lowercased().contains("error") || $0.contains("Traceback") }
-                .suffix(3).joined(separator: "\n") ?? ""
-            throw process.terminationReason == .uncaughtSignal && status != 0
-                ? BlendError.timeout
-                : BlendError.failed(detail.isEmpty ? "退出码 \(status)" : detail)
+                .filter { $0.lowercased().contains("error") || $0.contains("Traceback") || $0.contains("Error:") }
+                .suffix(3).joined(separator: "\n")
+            if timedOut.get {
+                throw BlendError.timeout
+            }
+            throw BlendError.failed(detail.isEmpty
+                ? "Blender 未生成输出文件（模型可能损坏，或 Blender 异常退出）"
+                : detail)
         }
 
         let dest = cacheRoot.appendingPathComponent(cacheKey(for: blendURL) + ".glb")
@@ -177,9 +241,10 @@ enum BlendPipeline {
         p.arguments = args
         let pipe = Pipe()
         p.standardOutput = pipe
-        p.standardError = Pipe()
+        p.standardError = FileHandle.nullDevice // 不读 stderr 会让管道写满后阻塞
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit() // 回收子进程：否则 Process 释放时内部任务未回收会抛 ObjC 异常
         return String(data: data, encoding: .utf8)
     }
 }

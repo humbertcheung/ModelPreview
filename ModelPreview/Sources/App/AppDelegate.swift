@@ -152,8 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     private func openBlend(_ url: URL) {
-        inspectPage("blend+5s", delay: 5)
-        inspectPage("blend+20s", delay: 20)
         if let cached = BlendPipeline.cachedGLB(for: url) {
             openGLBAsBlend(cached, original: url)
             return
@@ -184,28 +182,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private func fileSize(_ url: URL) -> Int64 {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-    }
-
-    /// 回读页面状态（诊断 JS 运行时问题）
-    private func inspectPage(_ tag: String, delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.webView != nil else { return }
-            self.webView.evaluateJavaScript("""
-            JSON.stringify({
-              hasViewer: typeof window.viewer,
-              models: (window.viewer && window.viewer.app) ? window.viewer.app.core.models.length : -1,
-              note: (document.getElementById('file-note') || {}).textContent || '',
-              smartSize: window.viewer && window.viewer.app ? JSON.stringify(window.viewer.app.getSmartSize()) : 'n/a',
-              camDist: window.viewer && window.viewer.app ? +window.viewer.app.core.active.position.distanceTo(window.viewer.app.core.controls.target).toFixed(2) : -1,
-              loadingHidden: (document.getElementById('loading') || {}).className || '',
-              lastErr: window.__lastErr || null
-            })
-            """) { result, error in
-                let info = "INSPECT[\(tag)]: result=\(result ?? "nil") error=\(error?.localizedDescription ?? "-")"
-                self.appendMsgLog(info)
-                NSLog("[MP-INSPECT] %@", info)
-            }
-        }
     }
 
     // MARK: - JS 桥

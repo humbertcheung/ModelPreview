@@ -72,11 +72,13 @@ export class Outliner {
     this.treeEl = treeEl;
     this.onSelect = onSelect;
     this.selected = new Set();
+    this.rowByUuid = {}; // 必须在构造函数初始化：未加载模型时拾取也会访问它
   }
 
   build(models) {
     this.treeEl.innerHTML = '';
     this.selected.clear();
+    this.rowByUuid = {};
     let total = 0;
     for (const m of models) {
       const rootRow = this.makeRow(m.root, m.name, true);
@@ -158,7 +160,6 @@ export class Outliner {
         : '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6c2 0 3.8.6 5.3 1.4M21.5 13.4c.3-.5.5-.9.5-.9s-3.5-6-10-6M3 3l18 18"/></svg>';
     });
 
-    this.rowByUuid = this.rowByUuid || {};
     this.rowByUuid[node.uuid] = row;
 
     return { el: item, childrenEl }; // el 是外层容器（行 + 子级），childrenEl 供父级挂子节点

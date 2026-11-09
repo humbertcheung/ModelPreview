@@ -141,9 +141,15 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">渲染调节 <button class="mini-btn" id="render-reset" title="恢复默认（曝光 1.0 / 环境 1.0）">重置</button></div>
-        <div class="slider-row"><span class="lbl">曝光</span><input type="range" id="sl-exposure" min="20" max="250" value="100"><span class="val" id="v-exposure">1.0</span></div>
-        <div class="slider-row"><span class="lbl">环境</span><input type="range" id="sl-env" min="0" max="250" value="20"><span class="val" id="v-env">0.2</span></div>
+        <div class="card-title">光源 <button class="mini-btn" id="light-reset" title="恢复默认光照方向（方位 37.5° / 仰角 54.5°）">重置</button></div>
+        <div class="slider-row"><span class="lbl">方位</span><input type="range" id="sl-light-az" min="0" max="360" value="38"><span class="val" id="v-light-az">38°</span></div>
+        <div class="slider-row"><span class="lbl">高度</span><input type="range" id="sl-light-el" min="10" max="88" value="55"><span class="val" id="v-light-el">55°</span></div>
+        <div class="slider-row"><span class="lbl">主光</span><input type="range" id="sl-light-it" min="20" max="200" value="100"><span class="val" id="v-light-it">100%</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">渲染调节 <button class="mini-btn" id="render-auto" title="自动：设置为您当前查看所需的推荐亮度（曝光 1.25 / 环境 0.55）">自动</button></div>
+        <div class="slider-row"><span class="lbl">曝光</span><input type="range" id="sl-exposure" min="20" max="250" value="125"><span class="val" id="v-exposure">1.25</span></div>
+        <div class="slider-row"><span class="lbl">环境</span><input type="range" id="sl-env" min="0" max="250" value="55"><span class="val" id="v-env">0.55</span></div>
       </div>
       <div class="card collapsible collapsed" id="ql-settings-card">
         <div class="card-title" id="ql-settings-toggle" title="展开 / 折叠">空格预览设置 <span class="twist" id="ql-settings-twist">▶</span></div>

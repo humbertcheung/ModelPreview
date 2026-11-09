@@ -206,12 +206,40 @@ class App {
       this.core.setEnvIntensity(e.target.value / 100);
       $('v-env').textContent = fmtNum1(e.target.value / 100);
     });
-    // 渲染调节重置：曝光恢复 1.0 / 环境恢复 0.2
-    $('render-reset').addEventListener('click', () => {
-      $('sl-exposure').value = 100; $('sl-env').value = 20;
-      this.core.setExposure(1.0); this.core.setEnvIntensity(0.2);
-      $('v-exposure').textContent = '1.0'; $('v-env').textContent = '0.2';
-      this.toast('渲染调节已重置');
+    // 渲染调节「自动」：一键设为推荐亮度（曝光 1.25 / 环境 0.55）
+    const RECOMMEND = { exposure: 125, env: 55 };
+    $('render-auto').addEventListener('click', () => {
+      $('sl-exposure').value = RECOMMEND.exposure; $('sl-env').value = RECOMMEND.env;
+      this.core.setExposure(RECOMMEND.exposure / 100);
+      this.core.setEnvIntensity(RECOMMEND.env / 100);
+      $('v-exposure').textContent = (RECOMMEND.exposure / 100).toFixed(2);
+      $('v-env').textContent = (RECOMMEND.env / 100).toFixed(2);
+      this.core.requestRender();
+      this.toast('已自动调整亮度（曝光 1.25 / 环境 0.55）');
+    });
+
+    // 光源：方位 / 高度 / 主光强度
+    $('sl-light-az').addEventListener('input', e => {
+      const az = +e.target.value, el = +$('sl-light-el').value;
+      $('v-light-az').textContent = az + '°';
+      this.core.setLightAngles(az, el);
+    });
+    $('sl-light-el').addEventListener('input', e => {
+      const az = +$('sl-light-az').value, el = +e.target.value;
+      $('v-light-el').textContent = el + '°';
+      this.core.setLightAngles(az, el);
+    });
+    $('sl-light-it').addEventListener('input', e => {
+      const it = +e.target.value;
+      $('v-light-it').textContent = it + '%';
+      this.core.setLightIntensity(it / 100);
+    });
+    $('light-reset').addEventListener('click', () => {
+      $('sl-light-az').value = 38; $('sl-light-el').value = 55; $('sl-light-it').value = 100;
+      $('v-light-az').textContent = '38°'; $('v-light-el').textContent = '55°'; $('v-light-it').textContent = '100%';
+      this.core.setLightIntensity(1.0);
+      this.core.setLightAngles(38, 55);
+      this.toast('光源已重置');
     });
   }
 
@@ -570,7 +598,11 @@ class App {
     if (!this.core.models.length) { this.toast('请先加载模型'); return; }
     const list = this.loadSnapshots();
     const snap = this.core.snapshot();
-    snap.name = `视角 ${list.length + 1}（${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}）`;
+    // 语义化命名：用当前相机方向识别视角（正面/左侧/俯视…），并保留时间
+    const view = this.core.describeView();
+    const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    snap.view = view;
+    snap.name = `${view} · ${time}`;
     list.push(snap);
     this.persistSnaps(list);
     this.renderSnaps();

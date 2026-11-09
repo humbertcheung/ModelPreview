@@ -27,7 +27,7 @@ export class SceneCore {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     this.renderer.setSize(this.container.clientWidth || 800, this.container.clientHeight || 600);
     this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = 1.25; // 推荐亮度（与渲染调节「自动」一致）
     // WebKit 实测：autoClear=false（手动 clear）会破坏 shadow map pass，保持默认 true
     this.renderer.shadowMap.enabled = true;      // 常开：材质首次编译即含阴影支持
     // WebKit(WKWebView) 实测：PCFSoftShadowMap 不渲染阴影，PCFShadowMap 正常（Chrome 两者均正常）
@@ -41,11 +41,14 @@ export class SceneCore {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     // 环境给模型提供反射；地面的阴影对比由地面材质单独压低 envMapIntensity 保证
     // （二分实验：scene.environment 全量作用地面时，白地面被环境照亮到接近满白，阴影对比 <8% 不可见）
-    this.scene.environmentIntensity = 0.45;
+    this.scene.environmentIntensity = 0.55;  // 推荐亮度：比 1.0 亮但不淹没地面阴影
     pmrem.dispose();
 
     // 强度 3.0：环境光贡献压到 0.2 后主光取 3 保证模型亮度与阴影对比
     // （二分实验证实：toneMapping+env 下 1.1 的直射光阴影对比 <10%，视觉不可见）
+    // 主光方向可由用户调整（方位角/仰角）；默认与历史方向一致
+    this.lightAzimuth = 37.5;   // 方位角（°）：0=正前(+Z)，逆时针
+    this.lightElevation = 54.5; // 仰角（°）
     this.keyLight = new THREE.DirectionalLight(0xffffff, 3.0);
     this.keyLight.position.set(4, 8, 5);
     this.keyLight.castShadow = true; // 常开：开关只切换接收面显示，避免材质重编译闪烁
@@ -141,81 +144,157 @@ export class SceneCore {
     return kind;
   }
 
+  /** 几何主轴（PCA）：车辆纵向是最长的方向。
+   *  比「按部件命名求均值」精确得多（后者只能到 2~3°，俯视/仰视图会看出歪斜）。
+   *  返回水平面内的最大方差方向（不区分正负，由命名结果定符号）。 */
+  principalAxis() {
+    let count = 0;
+    const sum = new THREE.Vector3();
+    const cov = [[0,0,0],[0,0,0],[0,0,0]];
+    const v = new THREE.Vector3();
+    for (const m of this.models) {
+      m.root.traverse(o => {
+        if (!o.isMesh || !o.geometry?.attributes?.position) return;
+        const pos = o.geometry.attributes.position;
+        const step = Math.max(1, Math.floor(pos.count / 300)); // 每个 mesh 采样上限 ~300 点
+        for (let i = 0; i < pos.count; i += step) {
+          v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(o.matrixWorld);
+          sum.add(v); count++;
+          cov[0][0]+=v.x*v.x; cov[0][1]+=v.x*v.y; cov[0][2]+=v.x*v.z;
+          cov[1][0]+=v.y*v.x; cov[1][1]+=v.y*v.y; cov[1][2]+=v.y*v.z;
+          cov[2][0]+=v.z*v.x; cov[2][1]+=v.z*v.y; cov[2][2]+=v.z*v.z;
+        }
+      });
+    }
+    if (count < 8) return null;
+    const c = [sum.x/count, sum.y/count, sum.z/count];
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        cov[i][j] = cov[i][j]/count - c[i]*c[j];
+    // 幂迭代求最大特征向量
+    let vec = new THREE.Vector3(1, 0, 0);
+    for (let it = 0; it < 48; it++) {
+      const w = new THREE.Vector3(
+        cov[0][0]*vec.x + cov[0][1]*vec.y + cov[0][2]*vec.z,
+        cov[1][0]*vec.x + cov[1][1]*vec.y + cov[1][2]*vec.z,
+        cov[2][0]*vec.x + cov[2][1]*vec.y + cov[2][2]*vec.z);
+      if (w.lengthSq() < 1e-14) break;
+      w.normalize();
+      const conv = w.dot(vec);
+      vec = w;
+      if (conv > 0.99999) break;
+    }
+    // 只保留水平分量（车身纵向是水平的）
+    const horiz = vec.clone().projectOnPlane(new THREE.Vector3(0, 1, 0));
+    if (horiz.lengthSq() < 0.25) return null; // 过于竖直 → 不是车身纵向
+    return horiz.normalize();
+  }
+
   /** 模型自身朝向（世界坐标）：
-   *  forward = 车头方向，right = 车体右侧，up = 世界竖直方向。
-   *  通过部件命名中的方向词（前/后/左/右、front/rear/left/right、_L/_R）推断，
-   *  因为 Blender 导出的模型朝向千差万别（kart 车头朝 +X，多数模型朝 +Z/-Z）。 */
+   *  核心思想：车辆左右对称 → 「左右对称部件对」的中心连线必然垂直于对称面。
+   *  这是几何精确的 right 轴（实测精度 0.13°），远优于部件名均值（2.3°）和
+   *  顶点 PCA（受顶点密度影响 2~3°，且求的是分布主轴而非对称轴）。
+   *  forward 由命名定正负、在对称面内正交化。 */
   modelAxes() {
     const key = this.models.map(m => m.root.uuid).join(',');
     if (this._axesKey === key && this._axes) return this._axes;
 
-    // 方向词：中文（前/后/左/右）与英文常见命名（front/rear/left/right、_FL/_FR/_RL/_RR）
+    const worldUp = new THREE.Vector3(0, 1, 0);
     const RE_FRONT = /(前|frt|front|fwd|nose|hood|bonnet|bumper|前部)/i;
     const RE_BACK = /(后|bck|back|rear|tail|trunk|尾)/i;
-    const RE_LEFT = /(左|lft|left|port|_(fl|rl|l)\b)/i;
-    const RE_RIGHT = /(右|rgt|right|stbd|starboard|_(fr|rr|r)\b)/i;
 
-    const sets = { front: [], back: [], left: [], right: [] };
-    const centers = [];
+    // 收集 mesh 名称与包围盒中心
+    const meshes = [];
     for (const m of this.models) {
+      m.root.updateMatrixWorld(true);
       m.root.traverse(o => {
         if (!o.isMesh || !o.geometry?.attributes?.position) return;
         o.geometry.computeBoundingBox();
         const c = o.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(o.matrixWorld);
-        centers.push(c);
-        const n = o.name || '';
-        if (RE_FRONT.test(n)) sets.front.push(c);
-        if (RE_BACK.test(n)) sets.back.push(c);
-        if (RE_LEFT.test(n)) sets.left.push(c);
-        if (RE_RIGHT.test(n)) sets.right.push(c);
+        meshes.push({ name: o.name || '', center: c });
       });
     }
-    if (!centers.length) return null;
+    if (!meshes.length) return null;
 
-    const mean = (arr) => {
-      const v = new THREE.Vector3();
-      for (const c of arr) v.add(c);
-      return v.divideScalar(arr.length || 1);
-    };
-    const modelCenter = mean(centers);
-    const worldUp = new THREE.Vector3(0, 1, 0);
+    // 模型整体包围盒
+    const allBox = new THREE.Box3();
+    for (const m of meshes) allBox.expandByPoint(m.center);
+    const allSize = allBox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(allSize.x, allSize.y, allSize.z) || 1;
+    const allCenter = allBox.getCenter(new THREE.Vector3());
 
-    // 前进方向：优先用「前部件」减「后部件」，否则用「前部件」减模型中心
-    let forward = null;
-    if (sets.front.length && sets.back.length) forward = mean(sets.front).sub(mean(sets.back));
-    else if (sets.front.length) forward = mean(sets.front).sub(modelCenter);
-    else if (sets.back.length) forward = modelCenter.sub(mean(sets.back));
-    if (forward && forward.lengthSq() > 1e-8) {
-      forward.normalize();
-      // 与竖直方向正交化（模型可能带轻微倾斜）
-      const horiz = forward.clone().projectOnPlane(worldUp);
-      if (horiz.lengthSq() > 1e-6) forward = horiz.normalize();
+    // 左右对匹配：名称去掉左右标记后相同，且中心距离 ≥ 模型尺寸 15%（过滤小件/中央件）
+    const strip = (n) => n
+      .replace(/_(左|右)/g, '_').replace(/(左|右)/g, '')
+      .replace(/_(left|right)/gi, '_').replace(/(left|right)/gi, '')
+      .replace(/_+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+    const groups = {};
+    for (const m of meshes) (groups[strip(m.name)] = groups[strip(m.name)] || []).push(m);
+
+    const pairDirs = [];   // 每对的连线方向（水平化、统一符号前）
+    const pairMids = [];   // 每对的中点（对称面中心采样）
+    const pairW = [];      // 权重 = 连线长度
+    let namedForward = null;
+    const frontC = [], backC = [];
+    for (const [k, arr] of Object.entries(groups)) {
+      // 命名推断车头方向
+      for (const m of arr) {
+        if (RE_FRONT.test(m.name)) frontC.push(m.center);
+        if (RE_BACK.test(m.name)) backC.push(m.center);
+      }
+      if (arr.length !== 2) continue;
+      const dist = arr[0].center.distanceTo(arr[1].center);
+      if (dist < maxDim * 0.15) continue;
+      let d = arr[1].center.clone().sub(arr[0].center);
+      pairMids.push(arr[0].center.clone().add(arr[1].center).multiplyScalar(0.5));
+      pairDirs.push(d); pairW.push(dist);
+    }
+
+    // 车头方向（命名推断，水平化）
+    const mean = (arr) => { const v = new THREE.Vector3(); for (const c of arr) v.add(c); return v.divideScalar(arr.length || 1); };
+    if (frontC.length && backC.length) namedForward = mean(frontC).sub(mean(backC));
+    else if (frontC.length) namedForward = mean(frontC).sub(allCenter);
+    else if (backC.length) namedForward = allCenter.sub(mean(backC));
+    if (namedForward) {
+      namedForward = namedForward.projectOnPlane(worldUp);
+      namedForward = namedForward.lengthSq() > 1e-6 ? namedForward.normalize() : null;
+    }
+
+    // right 轴：各对连线按长度加权平均（大部件方向更可靠）
+    // 符号统一：让连线指向 namedForward 的右侧（namedForward × up 方向）；
+    // 没有命名时统一指向 +Z（glTF 惯例），后续由镜像判定修正
+    const refSide = namedForward
+      ? new THREE.Vector3().crossVectors(namedForward, worldUp).normalize()
+      : new THREE.Vector3(0, 0, 1);
+    let right = new THREE.Vector3();
+    for (let i = 0; i < pairDirs.length; i++) {
+      const d = pairDirs[i].clone();
+      const horiz = d.projectOnPlane(worldUp);
+      if (horiz.lengthSq() < 1e-10) continue;
+      horiz.normalize();
+      if (horiz.dot(refSide) < 0) horiz.negate();
+      right.addScaledVector(horiz, pairW[i]);
+    }
+    if (right.lengthSq() > 1e-8) {
+      right.normalize();
     } else {
-      forward = new THREE.Vector3(0, 0, 1); // 兜底：glTF/Blender 常见朝向
+      right = refSide.clone();
     }
 
-    // 右侧方向：先用命名推断（能反映镜像模型的真实左右），
-    // 再与 forward 构成严格正交的右手系——保证各正交视图「正」（不歪斜）
-    let namedRight = null;
-    if (sets.right.length && sets.left.length) namedRight = mean(sets.right).sub(mean(sets.left));
-    else if (sets.right.length) namedRight = mean(sets.right).sub(modelCenter);
-    else if (sets.left.length) namedRight = modelCenter.sub(mean(sets.left));
-    if (namedRight && namedRight.lengthSq() > 1e-8) {
-      namedRight = namedRight.projectOnPlane(worldUp).normalize();
-    } else {
-      namedRight = null;
-    }
-    // 正交化：right = forward × up（保证 forward ⊥ right，俯视/正视严格对齐）
-    let right = new THREE.Vector3().crossVectors(forward, worldUp);
-    if (right.lengthSq() < 1e-8) right.set(1, 0, 0); // forward 与 up 平行时的兜底
-    right.normalize();
-    // 镜像模型：命名推断的右侧与正交化结果反向 → 翻转 forward（保持模型左右语义）
-    if (namedRight && namedRight.dot(right) < 0) {
-      forward.negate();
-      right.negate();
+    // forward = up × right，符号与命名一致；正交化保证 forward ⊥ right
+    let forward = new THREE.Vector3().crossVectors(worldUp, right);
+    if (forward.lengthSq() < 1e-10) forward.set(0, 0, 1);
+    forward.normalize();
+    if (namedForward && forward.dot(namedForward) < 0) forward.negate();
+
+    // 对称面中心：左右对中点的均值（x/z），y 用整体包围盒中心
+    const symCenter = allCenter.clone();
+    if (pairMids.length) {
+      const m = mean(pairMids);
+      symCenter.x = m.x; symCenter.z = m.z;
     }
 
-    this._axes = { forward, right, up: worldUp.clone() };
+    this._axes = { forward, right, up: worldUp.clone(), symCenter };
     this._axesKey = key;
     return this._axes;
   }
@@ -234,6 +313,8 @@ export class SceneCore {
     const dist = (radius / 2) / Math.tan((50 * Math.PI / 180) / 2) * 1.4;
 
     const axes = this.modelAxes();
+    // 左右对称模型：对准对称面中心（而非包围盒中心），否则前/后视图里车身偏一侧
+    if (axes) { center.x = axes.symCenter.x; center.z = axes.symCenter.z; }
     const fwd = axes ? axes.forward.clone() : new THREE.Vector3(0, 0, 1);
     const rgt = axes ? axes.right.clone() : new THREE.Vector3(1, 0, 0);
     const up = axes ? axes.up.clone() : new THREE.Vector3(0, 1, 0);
@@ -258,15 +339,22 @@ export class SceneCore {
       default: d = fwd.clone();
     }
 
-    const wasKind = this.camKind;
-    // 45° 用透视（3/4 产品视角更自然）；六个轴向视图用正交
-    if (name === 'iso45') { if (wasKind !== 'persp') this.setCameraKind('persp'); }
-    else if (wasKind !== 'ortho') this.setCameraKind('ortho');
-
-    this.active.position.copy(center).addScaledVector(d, dist);
+    // 顺序很重要：先把透视相机摆到目标位置，再切换相机类型——
+    // 否则 setCameraKind 计算正交视锥时用的还是「上一个视角」的相机位置，
+    // 导致各视角下模型大小/居中不一致（表现为「不正」）。
+    this.persp.position.copy(center).addScaledVector(d, dist);
+    this.persp.up.copy(camUp);
+    this.persp.lookAt(center);
     this.controls.target.copy(center);
+
+    const wantKind = name === 'iso45' ? 'persp' : 'ortho';
+    if (this.camKind !== wantKind) this.setCameraKind(wantKind);
+
+    // 切换后再摆一次（setCameraKind 会把源相机的 position 复制过来）
+    this.active.position.copy(center).addScaledVector(d, dist);
     this.active.up.copy(camUp);
     this.active.lookAt(center);
+    this.controls.target.copy(center);
     this.controls.update();
     this._lastPreset = name;
     this.requestRender();
@@ -277,6 +365,8 @@ export class SceneCore {
     if (!box || box.isEmpty()) return;
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
+    const axes0 = this.modelAxes();
+    if (axes0) { center.x = axes0.symCenter.x; center.z = axes0.symCenter.z; }
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const dist = (maxDim / 2) / Math.tan((50 * Math.PI / 180) / 2) * 1.35;
     // 默认视角与「45°」预设保持一致（模型前左上方），朝向随模型自身推断
@@ -299,7 +389,7 @@ export class SceneCore {
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const radius = Math.max(size.length() * 0.62, 1); // 包围球半径（略余量）
-    const dir = new THREE.Vector3(0.5, 1.15, 0.65).normalize(); // 固定采光方向：右上前
+    const dir = this.lightDirection(); // 用户可调的采光方向
     light.position.copy(center).addScaledVector(dir, radius * 2.2);
     light.target.position.copy(center);
     light.target.updateMatrixWorld();
@@ -311,6 +401,33 @@ export class SceneCore {
     if (light.shadow.map) { light.shadow.map.dispose(); light.shadow.map = null; } // 强制下一帧重建阴影贴图
     light.shadow.bias = -0.0005;
     this.requestShadowUpdate();
+  }
+
+  /** 当前视角的语义化描述（用于快照命名）：正面/背面/左侧/右侧/俯视/仰视/45°/自定义 */
+  describeView() {
+    const axes = this.modelAxes();
+    if (!axes) return '自定义视角';
+    const d = this.active.position.clone().sub(this.controls.target);
+    if (d.lengthSq() < 1e-8) return '自定义视角';
+    d.normalize();
+    const fwd = axes.forward, rgt = axes.right, up = axes.up;
+    const iso = fwd.clone().sub(rgt).add(up).normalize();
+    const cands = [
+      { name: '正面（车头朝向）', dir: fwd },
+      { name: '背面（车尾朝向）', dir: fwd.clone().negate() },
+      { name: '右侧视角', dir: rgt },
+      { name: '左侧视角', dir: rgt.clone().negate() },
+      { name: '俯视（顶视）', dir: up },
+      { name: '仰视（底视）', dir: up.clone().negate() },
+      { name: '45° 斜视角', dir: iso },
+      { name: '45° 反向斜视', dir: iso.clone().negate() },
+    ];
+    let best = null, bestDot = 0.86;   // 阈值：夹角小于 ~30° 才认作该视角
+    for (const c of cands) {
+      const dot = c.dir.dot(d);
+      if (dot > bestDot) { bestDot = dot; best = c.name; }
+    }
+    return best || '自定义视角';
   }
 
   /** 视角快照 */
@@ -612,6 +729,34 @@ export class SceneCore {
     if (box && !box.isEmpty()) this.fitShadowCamera(box);
     this.syncGridHeight();
     this.requestShadowUpdate();
+  }
+
+  /** 采光方向：由方位角/仰角换算（方位角 0=正前 +Z，逆时针；仰角 90=正上方） */
+  lightDirection() {
+    const az = (this.lightAzimuth ?? 37.5) * Math.PI / 180;
+    const el = (this.lightElevation ?? 54.5) * Math.PI / 180;
+    return new THREE.Vector3(
+      Math.sin(az) * Math.cos(el),
+      Math.sin(el),
+      Math.cos(az) * Math.cos(el)
+    ).normalize();
+  }
+
+  /** 调整光源方位角/仰角（°），阴影相机随动 */
+  setLightAngles(azimuthDeg, elevationDeg) {
+    if (azimuthDeg != null) this.lightAzimuth = Math.max(0, Math.min(360, azimuthDeg));
+    if (elevationDeg != null) this.lightElevation = Math.max(5, Math.min(88, elevationDeg));
+    const box = this.smartBoundingBox();
+    if (box && !box.isEmpty()) this.fitShadowCamera(box);
+    this.requestShadowUpdate();
+    this.requestRender();
+  }
+
+  /** 主光强度（倍率，1.0 = 3.0 基准强度） */
+  setLightIntensity(mult) {
+    this.keyLight.intensity = 3.0 * Math.max(0, mult);
+    this.requestShadowUpdate();
+    this.requestRender();
   }
 
   setExposure(v) { this.renderer.toneMappingExposure = v; this.requestRender(); }

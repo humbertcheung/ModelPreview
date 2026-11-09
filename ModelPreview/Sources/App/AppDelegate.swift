@@ -278,7 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    /// 一键导出全部视角 PNG：让用户选择文件夹，写入 7 张图后直接在访达中显示
+    /// 一键导出全部视角 PNG：让用户选择文件夹 → 写入 7 张图 → 明确提示保存路径
     private func saveAllViews(name: String, images: [[String: Any]]) {
         guard !images.isEmpty else { return }
         let panel = NSOpenPanel()
@@ -286,27 +286,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "导出到此处"
-        panel.message = "选择用于保存 \(images.count) 张视角图的文件夹"
+        panel.prompt = "保存到此处"
+        panel.message = "选择用于保存 \(images.count) 张视角图（PNG）的文件夹"
+        panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
         panel.beginSheetModal(for: window) { [weak self] resp in
-            guard let self, resp == .OK, let dir = panel.url else { return }
+            guard let self, resp == .OK, let dir = panel.url else {
+                self?.notifyExportViewsDone(path: nil, count: 0)
+                return
+            }
             var written: [URL] = []
+            var failed = 0
             for img in images {
                 let fileName = (img["name"] as? String) ?? "\(name).png"
                 let dataURL = (img["data"] as? String) ?? ""
                 guard let b64 = dataURL.components(separatedBy: ",").last,
-                      let data = Data(base64Encoded: b64) else { continue }
+                      let data = Data(base64Encoded: b64) else { failed += 1; continue }
                 let dest = dir.appendingPathComponent(fileName)
                 do {
                     try data.write(to: dest)
                     written.append(dest)
                 } catch {
-                    NSAlert(error: error).runModal()
+                    failed += 1
                 }
             }
+            self.appendMsgLog("EXPORT-VIEWS wrote \(written.count) files to \(dir.path)")
             if !written.isEmpty {
                 NSWorkspace.shared.activateFileViewerSelecting(written)
-                self.appendMsgLog("EXPORT-VIEWS wrote \(written.count) files to \(dir.path)")
+            }
+            self.notifyExportViewsDone(path: dir.path, count: written.count)
+            // 明确的成功提示（含保存路径）
+            let alert = NSAlert()
+            alert.messageText = written.isEmpty ? "导出失败" : "已导出 \(written.count) 张视角图"
+            alert.informativeText = written.isEmpty
+                ? "图片写入失败（\(failed) 张）。请检查目标文件夹的写入权限。"
+                : "保存位置：\n\(dir.path)"
+            alert.addButton(withTitle: "在访达中显示")
+            alert.addButton(withTitle: "好")
+            if alert.runModal() == .alertFirstButtonReturn, !written.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(written)
+            }
+        }
+    }
+
+    /// 把导出结果回传给网页端（用于显示含路径的提示）
+    private func notifyExportViewsDone(path: String?, count: Int) {
+        // 用 JSON 编码参数，避免路径中的引号/反斜杠破坏 JS 字符串
+        let pathJSON: String
+        if let path {
+            pathJSON = (try? JSONSerialization.data(withJSONObject: path, options: [.fragmentsAllowed]))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        } else {
+            pathJSON = "null"
+        }
+        let js = "window.viewer && window.viewer.onExportViewsDone && window.viewer.onExportViewsDone(\(pathJSON), \(count))"
+        DispatchQueue.main.async { [weak self] in
+            self?.webView.evaluateJavaScript(js) { _, error in
+                if let error { NSLog("[MP] export-views 回传失败: %@", error.localizedDescription) }
             }
         }
     }

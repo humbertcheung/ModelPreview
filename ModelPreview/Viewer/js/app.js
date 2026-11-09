@@ -655,7 +655,7 @@ class App {
 
     if (bridge) {
       postToNative({ type: 'export-views', name: base, images });
-      this.toast(`已生成 ${images.length} 张视角图，正在保存…`);
+      this.toast(`已生成 ${images.length} 张视角图，请选择保存位置…`, 2500);
     } else {
       for (const im of images) { const a = document.createElement('a'); a.href = im.data; a.download = im.name; a.click(); }
       this.toast(`已导出 ${images.length} 张视角图`);
@@ -807,6 +807,7 @@ class App {
   toast(text, ms = 2200) {
     const el = $('toast');
     el.textContent = text;
+    el.classList.toggle('multiline', text.includes('\n'));
     el.classList.add('show');
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => el.classList.remove('show'), ms);
@@ -927,6 +928,12 @@ try {
 } catch { /* QL 无存储 */ }
 
 // QL 设置回读（native 注入）
+// 原生端保存完成后回传：显示含完整路径的成功提示
+window.viewer.onExportViewsDone = (path, count) => {
+  if (!path || !count) { app.toast('未导出任何图片', 3000); return; }
+  app.toast(`已导出 ${count} 张视角图\n保存位置：${path}`, 9000);
+};
+
 window.viewer.applyQlSettingsB64 = (b64) => {
   try {
     const json = JSON.parse(new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));

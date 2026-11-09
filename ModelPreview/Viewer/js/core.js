@@ -141,7 +141,80 @@ export class SceneCore {
   
     this.requestRender();}
 
-  /** 六视图预设（正交投影下最直观） */
+  /** 模型自身朝向（世界坐标）：
+   *  forward = 车头方向，right = 车体右侧，up = 世界竖直方向。
+   *  通过部件命名中的方向词（前/后/左/右、front/rear/left/right、_L/_R）推断，
+   *  因为 Blender 导出的模型朝向千差万别（kart 车头朝 +X，多数模型朝 +Z/-Z）。 */
+  modelAxes() {
+    const key = this.models.map(m => m.root.uuid).join(',');
+    if (this._axesKey === key && this._axes) return this._axes;
+
+    // 方向词：中文（前/后/左/右）与英文常见命名（front/rear/left/right、_FL/_FR/_RL/_RR）
+    const RE_FRONT = /(前|frt|front|fwd|nose|hood|bonnet|bumper|前部)/i;
+    const RE_BACK = /(后|bck|back|rear|tail|trunk|尾)/i;
+    const RE_LEFT = /(左|lft|left|port|_(fl|rl|l)\b)/i;
+    const RE_RIGHT = /(右|rgt|right|stbd|starboard|_(fr|rr|r)\b)/i;
+
+    const sets = { front: [], back: [], left: [], right: [] };
+    const centers = [];
+    for (const m of this.models) {
+      m.root.traverse(o => {
+        if (!o.isMesh || !o.geometry?.attributes?.position) return;
+        o.geometry.computeBoundingBox();
+        const c = o.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(o.matrixWorld);
+        centers.push(c);
+        const n = o.name || '';
+        if (RE_FRONT.test(n)) sets.front.push(c);
+        if (RE_BACK.test(n)) sets.back.push(c);
+        if (RE_LEFT.test(n)) sets.left.push(c);
+        if (RE_RIGHT.test(n)) sets.right.push(c);
+      });
+    }
+    if (!centers.length) return null;
+
+    const mean = (arr) => {
+      const v = new THREE.Vector3();
+      for (const c of arr) v.add(c);
+      return v.divideScalar(arr.length || 1);
+    };
+    const modelCenter = mean(centers);
+    const worldUp = new THREE.Vector3(0, 1, 0);
+
+    // 前进方向：优先用「前部件」减「后部件」，否则用「前部件」减模型中心
+    let forward = null;
+    if (sets.front.length && sets.back.length) forward = mean(sets.front).sub(mean(sets.back));
+    else if (sets.front.length) forward = mean(sets.front).sub(modelCenter);
+    else if (sets.back.length) forward = modelCenter.sub(mean(sets.back));
+    if (forward && forward.lengthSq() > 1e-8) {
+      forward.normalize();
+      // 与竖直方向正交化（模型可能带轻微倾斜）
+      const horiz = forward.clone().projectOnPlane(worldUp);
+      if (horiz.lengthSq() > 1e-6) forward = horiz.normalize();
+    } else {
+      forward = new THREE.Vector3(0, 0, 1); // 兜底：glTF/Blender 常见朝向
+    }
+
+    // 右侧方向：优先用命名推断（对镜像缩放的模型也正确），否则用 forward × up
+    let right = null;
+    if (sets.right.length && sets.left.length) right = mean(sets.right).sub(mean(sets.left));
+    else if (sets.right.length) right = mean(sets.right).sub(modelCenter);
+    else if (sets.left.length) right = modelCenter.sub(mean(sets.left));
+    if (right && right.lengthSq() > 1e-8) {
+      right = right.projectOnPlane(worldUp).normalize();
+      // 命名推断的 right 与 forward 右手系相反时（镜像模型），仍以命名为准但记录下来
+    } else {
+      right = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
+    }
+
+    this._axes = { forward, right, up: worldUp.clone() };
+    this._axesKey = key;
+    return this._axes;
+  }
+
+  /** 视图预设（基于模型自身朝向）：
+   *  前 = 车头正对镜头；后 = 车尾正对镜头；
+   *  右 = 从车体右侧看；左 = 从车体左侧看；
+   *  顶/底 = 车头朝下；45° = 车头朝左下角、车尾朝右上角（前左上方俯视 45°） */
   setPresetView(name) {
     if (!this.models.length) return;
     const box = this.smartBoundingBox();
@@ -151,23 +224,39 @@ export class SceneCore {
     const radius = Math.max(size.x, size.y, size.z) || 1;
     const dist = (radius / 2) / Math.tan((50 * Math.PI / 180) / 2) * 1.4;
 
-    const dirs = {
-      front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0],
-      right: [1, 0, 0], top: [0, 1, 0.0001], bottom: [0, -1, 0.0001],
-      // 45°：左前上方俯视（方位角前↔左各 45°，仰角 45°）
-      iso45: [-0.5, Math.SQRT1_2, 0.5],
-    };
-    const d = new THREE.Vector3(...(dirs[name] || [0, 0, 1])).normalize();
-    // 记录当前 up 以保持顶/底视图稳定
+    const axes = this.modelAxes();
+    const fwd = axes ? axes.forward.clone() : new THREE.Vector3(0, 0, 1);
+    const rgt = axes ? axes.right.clone() : new THREE.Vector3(1, 0, 0);
+    const up = axes ? axes.up.clone() : new THREE.Vector3(0, 1, 0);
+
+    let d, camUp = up.clone();
+    switch (name) {
+      case 'front': d = fwd.clone(); break;                       // 车头正对
+      case 'back': d = fwd.clone().negate(); break;               // 车尾正对
+      case 'right': d = rgt.clone(); break;                       // 车体右侧
+      case 'left': d = rgt.clone().negate(); break;               // 车体左侧
+      case 'top':                                    // 俯视：车头朝下
+        d = up.clone();
+        camUp = fwd.clone().negate();
+        break;
+      case 'bottom':                                 // 仰视：车头朝下
+        d = up.clone().negate();
+        camUp = fwd.clone().negate();
+        break;
+      case 'iso45':                                  // 前左上方 45°：车头朝左下角
+        d = fwd.clone().sub(rgt).add(up).normalize();
+        break;
+      default: d = fwd.clone();
+    }
+
     const wasKind = this.camKind;
     // 45° 用透视（3/4 产品视角更自然）；六个轴向视图用正交
     if (name === 'iso45') { if (wasKind !== 'persp') this.setCameraKind('persp'); }
     else if (wasKind !== 'ortho') this.setCameraKind('ortho');
+
     this.active.position.copy(center).addScaledVector(d, dist);
     this.controls.target.copy(center);
-    this.active.up.set(0, 1, 0);
-    if (name === 'top') this.active.up.set(0, 0, -1);
-    if (name === 'bottom') this.active.up.set(0, 0, 1);
+    this.active.up.copy(camUp);
     this.active.lookAt(center);
     this.controls.update();
     this._lastPreset = name;
@@ -181,8 +270,14 @@ export class SceneCore {
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
     const dist = (maxDim / 2) / Math.tan((50 * Math.PI / 180) / 2) * 1.35;
+    // 默认视角与「45°」预设保持一致（模型前左上方），朝向随模型自身推断
+    const axes = this.modelAxes();
+    const fwd = axes ? axes.forward : new THREE.Vector3(0, 0, 1);
+    const rgt = axes ? axes.right : new THREE.Vector3(1, 0, 0);
+    const up = axes ? axes.up : new THREE.Vector3(0, 1, 0);
+    const dir = fwd.clone().sub(rgt).add(up).normalize();
     this.active.up.set(0, 1, 0);
-    this.active.position.copy(center).addScaledVector(new THREE.Vector3(1, 0.55, 1).normalize(), dist);
+    this.active.position.copy(center).addScaledVector(dir, dist);
     this.controls.target.copy(center);
     if (this.camKind === 'ortho') this.setCameraKind('persp');
     this.controls.update();

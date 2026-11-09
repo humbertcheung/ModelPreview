@@ -137,9 +137,9 @@ export class SceneCore {
     this.camKind = kind;
     this.controls.object = this.active;
     this.controls.update();
+    this.requestRender();
     return kind;
-  
-    this.requestRender();}
+  }
 
   /** 模型自身朝向（世界坐标）：
    *  forward = 车头方向，right = 车体右侧，up = 世界竖直方向。
@@ -194,16 +194,25 @@ export class SceneCore {
       forward = new THREE.Vector3(0, 0, 1); // 兜底：glTF/Blender 常见朝向
     }
 
-    // 右侧方向：优先用命名推断（对镜像缩放的模型也正确），否则用 forward × up
-    let right = null;
-    if (sets.right.length && sets.left.length) right = mean(sets.right).sub(mean(sets.left));
-    else if (sets.right.length) right = mean(sets.right).sub(modelCenter);
-    else if (sets.left.length) right = modelCenter.sub(mean(sets.left));
-    if (right && right.lengthSq() > 1e-8) {
-      right = right.projectOnPlane(worldUp).normalize();
-      // 命名推断的 right 与 forward 右手系相反时（镜像模型），仍以命名为准但记录下来
+    // 右侧方向：先用命名推断（能反映镜像模型的真实左右），
+    // 再与 forward 构成严格正交的右手系——保证各正交视图「正」（不歪斜）
+    let namedRight = null;
+    if (sets.right.length && sets.left.length) namedRight = mean(sets.right).sub(mean(sets.left));
+    else if (sets.right.length) namedRight = mean(sets.right).sub(modelCenter);
+    else if (sets.left.length) namedRight = modelCenter.sub(mean(sets.left));
+    if (namedRight && namedRight.lengthSq() > 1e-8) {
+      namedRight = namedRight.projectOnPlane(worldUp).normalize();
     } else {
-      right = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
+      namedRight = null;
+    }
+    // 正交化：right = forward × up（保证 forward ⊥ right，俯视/正视严格对齐）
+    let right = new THREE.Vector3().crossVectors(forward, worldUp);
+    if (right.lengthSq() < 1e-8) right.set(1, 0, 0); // forward 与 up 平行时的兜底
+    right.normalize();
+    // 镜像模型：命名推断的右侧与正交化结果反向 → 翻转 forward（保持模型左右语义）
+    if (namedRight && namedRight.dot(right) < 0) {
+      forward.negate();
+      right.negate();
     }
 
     this._axes = { forward, right, up: worldUp.clone() };
@@ -235,11 +244,11 @@ export class SceneCore {
       case 'back': d = fwd.clone().negate(); break;               // 车尾正对
       case 'right': d = rgt.clone(); break;                       // 车体右侧
       case 'left': d = rgt.clone().negate(); break;               // 车体左侧
-      case 'top':                                    // 俯视：车头朝下
+      case 'top':                                    // 俯视：车头严格朝下
         d = up.clone();
         camUp = fwd.clone().negate();
         break;
-      case 'bottom':                                 // 仰视：车头朝下
+      case 'bottom':                                 // 仰视：车头严格朝下
         d = up.clone().negate();
         camUp = fwd.clone().negate();
         break;
@@ -612,20 +621,28 @@ export class SceneCore {
 
   startLoop(onFrame) {
     this.clock = new THREE.Clock();
+    // 相机变化（拖拽/缩放/平移）由 OrbitControls 的 change 事件统一标脏：
+    // 比在循环里判断 update() 返回值更可靠，不会出现「拖动后画面不动」
+    this.controls.addEventListener('change', () => { this.needsRender = true; });
+    let lastIdle = performance.now();
     const loop = () => {
       requestAnimationFrame(loop);
       const delta = this.clock.getDelta();
-      // 相机阻尼更新：仅在相机真的变化时标脏
-      const camChanged = this.controls.update();
-      if (camChanged) this.needsRender = true;
+      this.controls.update();
       if (onFrame) onFrame(delta);
-      // 按需渲染：场景无变化时完全跳过绘制，GPU 占用从持续满载降到接近 0
-      if (this.needsRender || this.continuous) {
-        if (document.hidden) { this.needsRender = true; return; } // 后台不绘制
-        // 动画/转盘时模型在动，阴影需逐帧重算；静止时阴影贴图保持不变
-        if (this.continuous) this.renderer.shadowMap.needsUpdate = true;
-        this.renderer.render(this.scene, this.active);
-        this.needsRender = false;
+      const now = performance.now();
+      // 心跳兜底：每 600ms 至少重绘一帧。
+      // 作用：任何遗漏的状态变更都不会让画面永久静止（体验优先），
+      // 同时空闲时依然只有 ~1.7fps 的绘制，GPU 占用远低于持续满载。
+      const idle = now - lastIdle > 600;
+      if (this.needsRender || this.continuous || idle) {
+        if (!document.hidden) {
+          // 动画/转盘时模型在动，阴影需逐帧重算；静止时阴影贴图保持不变
+          if (this.continuous) this.renderer.shadowMap.needsUpdate = true;
+          this.renderer.render(this.scene, this.active);
+          this.needsRender = false;
+          lastIdle = now;
+        }
       }
     };
     loop();

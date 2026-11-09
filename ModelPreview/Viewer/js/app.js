@@ -302,8 +302,28 @@ class App {
 
   bindViewport() {
     const dom = this.core.renderer.domElement;
+    // 区分「点击选中」与「拖动旋转」：
+    // click 事件在鼠标松开时触发，拖动旋转后松手同样会触发，
+    // 若不区分就会把鼠标下方的部件误选中（体验很差）。
+    // 判定：按下到松开的位移超过阈值(5px)即视为拖动，不触发选中。
+    const DRAG_THRESHOLD = 5;
+    let downPos = null;
+    let dragged = false;
+    dom.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      downPos = { x: e.clientX, y: e.clientY };
+      dragged = false;
+    });
+    dom.addEventListener('pointermove', (e) => {
+      if (!downPos) return;
+      if (Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > DRAG_THRESHOLD) dragged = true;
+    });
+    const endPointer = () => { downPos = null; };
+    dom.addEventListener('pointerup', endPointer);
+    dom.addEventListener('pointercancel', endPointer);
     dom.addEventListener('click', (e) => {
-      if (e.detail === 0) return;
+      if (e.detail === 0) return;      // 键盘触发
+      if (dragged) { dragged = false; return; }  // 是拖动手势 → 不选中
       const hit = this.outliner.raycast(this.core.active, this.core.pickables || this.core.scene, e, dom);
       const nodes = hit ? [hit] : [];
       this.outliner.highlightFromPick(nodes);
@@ -634,8 +654,11 @@ class App {
     this.core.renderer.setSize(w, h, false);
 
     const images = [];
-    this.showLoading('正在导出 7 个视角…');
-    for (const v of views) {
+    this.showLoading('正在生成视角图 0/7…');
+    for (let i = 0; i < views.length; i++) {
+      const v = views[i];
+      this.showLoading(`正在生成视角图 ${i + 1}/${views.length}（${v.label}）…`);
+      await new Promise(r => requestAnimationFrame(r)); // 先让进度刷新出来
       this.core.setPresetView(v.key);
       this.core.renderer.render(this.core.scene, this.core.active);
       const data = this.core.renderer.domElement.toDataURL('image/png');
@@ -929,6 +952,24 @@ try {
 
 // QL 设置回读（native 注入）
 // 原生端保存完成后回传：显示含完整路径的成功提示
+// 资源占用（native 每 2 秒推送）
+window.viewer.setPerf = (d) => {
+  const set = (id, val, hot) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const b = el.querySelector('b');
+    b.textContent = val;
+    el.classList.toggle('hot', !!hot);
+  };
+  // 数值四舍五入为整数，不显示小数位
+  const cpu = d.cpu;
+  set('sb-cpu', cpu == null ? '—' : Math.round(cpu) + '%', cpu != null && cpu > 50);
+  const gpu = d.gpu;
+  set('sb-gpu', gpu == null ? '—' : Math.round(gpu) + '%', gpu != null && gpu > 60);
+  const mem = d.mem;
+  set('sb-mem', mem == null ? '—' : (mem >= 1024 ? (mem / 1024).toFixed(1) + ' GB' : Math.round(mem) + ' MB'), mem != null && mem > 2048);
+};
+
 window.viewer.onExportViewsDone = (path, count) => {
   if (!path || !count) { app.toast('未导出任何图片', 3000); return; }
   app.toast(`已导出 ${count} 张视角图\n保存位置：${path}`, 9000);

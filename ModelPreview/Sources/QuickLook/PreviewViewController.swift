@@ -47,9 +47,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 v.autoenablesDefaultLighting = true
                 v.allowsCameraControl = true
                 v.antialiasingMode = .multisampling4X
-                // 按需渲染：持续渲染会让 QL 扩展在后台空转吃 GPU（实测约 5%）。
-                // 场景就绪后主动绘制一次即可；allowsCameraControl 交互时 SceneKit 会自行重绘。
-                v.rendersContinuously = false
+                // 持续渲染：QL 面板需要随相机交互实时更新；
+                // 此前改为按需渲染会导致面板偶发黑屏（体验优先，QL 进程生命周期短，开销可接受）
+                v.rendersContinuously = true
                 self.scnView = v
                 self.view.addSubview(v)
                 self.dbg("placeholder SCNView mounted for .\(ext)")
@@ -193,8 +193,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                     }
                 }
                 v.scene = scene
-                v.prepare(scene)   // 预编译着色器，避免首次显示卡顿
-                v.display()        // 立即绘制一帧（按需渲染模式下必须显式触发）
+                // 只绘制一帧（按需渲染模式）。注意：不要调用 v.prepare(scene)——
+                // 它会同步编译全部着色器，大模型（数十万面）会阻塞主线程数秒，
+                // 直接导致空格预览/选中预览打开变慢。
+                v.display()
                 self.dbg("scene mounted: nodes=\(scene.rootNode.childNodes.count)")
             }
         } catch {

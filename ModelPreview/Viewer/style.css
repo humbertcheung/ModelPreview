@@ -343,6 +343,21 @@ input[type="range"]::-webkit-slider-thumb {
   min-height: 28px;
 }
 .sb-spacer { flex: 1; }
+
+/* 资源占用（CPU / GPU / 内存） */
+.sb-perf { display: inline-flex; align-items: center; gap: 16px; }
+.sb-metric {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+/* 值紧跟标题（去掉 min-width 右对齐造成的空档），指标之间由父级 gap 拉开 */
+.sb-metric b { font-weight: 600; color: var(--text-mid); }
+.sb-metric .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.sb-metric .dot.cpu { background: #46a758; }
+.sb-metric .dot.gpu { background: #f5a524; }
+.sb-metric .dot.mem { background: #4c8dff; }
+.sb-metric.hot b { color: #e5484d; }
 #sb-ground { color: var(--ok); }
 
 /* ============ 动画条 ============ */

@@ -54,12 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     private var pendingAppend = false
     private var themeButtonState = false { didSet { syncThemeButton() } }
     private var pageReady = false
+    private let perf = PerfMonitor()
+    private var perfTimer: Timer?
     private var toolbarItems: [String: NSToolbarItem] = [:]
 
     // MARK: - 启动
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppMenu()
+        startPerfMonitor()
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
                            backing: .buffered, defer: false)
@@ -326,6 +329,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 NSWorkspace.shared.activateFileViewerSelecting(written)
             }
         }
+    }
+
+    /// 资源占用采样：每 2 秒把 CPU/内存/GPU 推送到网页状态栏
+    private func startPerfMonitor() {
+        perfTimer?.invalidate()
+        let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let s = self.perf.sample()
+            var js = "window.viewer && window.viewer.setPerf && window.viewer.setPerf({"
+            js += "cpu: \(s.cpuPercent.map { String(format: "%.1f", $0) } ?? "null"),"
+            js += "mem: \(s.memoryMB.map { String(format: "%.0f", $0) } ?? "null"),"
+            js += "gpu: \(s.gpuPercent.map { String(format: "%.0f", $0) } ?? "null")"
+            js += "})"
+            DispatchQueue.main.async { [weak self] in
+                self?.webView.evaluateJavaScript(js, completionHandler: nil)
+            }
+        }
+        t.tolerance = 0.5
+        RunLoop.main.add(t, forMode: .common)
+        perfTimer = t
     }
 
     /// 把导出结果回传给网页端（用于显示含路径的提示）

@@ -54,6 +54,7 @@ swiftc -O -swift-version 5 -module-name ModelPreview \
     "$SRC/Shared/BlendThumbnail.swift" \
     "$SRC/Shared/ViewerSchemeHandler.swift" \
     "$SRC/App/AppDelegate.swift" \
+    "$SRC/App/PerfMonitor.swift" \
     "$SRC/App/main.swift" \
     -o "$APP/Contents/MacOS/$EXEC_NAME" \
     -framework Cocoa -framework WebKit 2>&1 | grep -v "^$" || true

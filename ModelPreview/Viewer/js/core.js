@@ -23,7 +23,8 @@ export class SceneCore {
 
   initRenderer() {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // 像素比上限 1.75：Retina 下 2.0 是 4 倍像素，改为 1.75 后约省 23% 填充率
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     this.renderer.setSize(this.container.clientWidth || 800, this.container.clientHeight || 600);
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -59,6 +60,17 @@ export class SceneCore {
     this.shadowVisible = false;
     this.groundMode = 'auto';
     this.groundColor = 0xf2f3f5;
+    this.needsRender = true;   // 脏标记：仅在场景/相机变化时渲染
+    this.continuous = false;   // 动画/自动旋转期间需要连续渲染
+  }
+
+  /** 标记场景已变化，下一帧渲染 */
+  requestRender() { this.needsRender = true; }
+
+  /** 标记阴影需要重新计算（模型/地面/光源变化时） */
+  requestShadowUpdate() {
+    this.needsRender = true;
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   initCameras() {
@@ -101,7 +113,8 @@ export class SceneCore {
     this.ortho.top = fh / 2; this.ortho.bottom = -fh / 2;
     this.ortho.updateProjectionMatrix();
     this.renderer.setSize(w, h);
-  }
+  
+    this.requestRender();}
 
   /* ---------- 相机 ---------- */
 
@@ -125,7 +138,8 @@ export class SceneCore {
     this.controls.object = this.active;
     this.controls.update();
     return kind;
-  }
+  
+    this.requestRender();}
 
   /** 六视图预设（正交投影下最直观） */
   setPresetView(name) {
@@ -140,11 +154,15 @@ export class SceneCore {
     const dirs = {
       front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0],
       right: [1, 0, 0], top: [0, 1, 0.0001], bottom: [0, -1, 0.0001],
+      // 45°：左前上方俯视（方位角前↔左各 45°，仰角 45°）
+      iso45: [-0.5, Math.SQRT1_2, 0.5],
     };
     const d = new THREE.Vector3(...(dirs[name] || [0, 0, 1])).normalize();
     // 记录当前 up 以保持顶/底视图稳定
     const wasKind = this.camKind;
-    if (wasKind !== 'ortho') this.setCameraKind('ortho');
+    // 45° 用透视（3/4 产品视角更自然）；六个轴向视图用正交
+    if (name === 'iso45') { if (wasKind !== 'persp') this.setCameraKind('persp'); }
+    else if (wasKind !== 'ortho') this.setCameraKind('ortho');
     this.active.position.copy(center).addScaledVector(d, dist);
     this.controls.target.copy(center);
     this.active.up.set(0, 1, 0);
@@ -153,6 +171,7 @@ export class SceneCore {
     this.active.lookAt(center);
     this.controls.update();
     this._lastPreset = name;
+    this.requestRender();
   }
 
   resetView() {
@@ -187,6 +206,7 @@ export class SceneCore {
     if (light.shadow.mapSize.width < 2048) light.shadow.mapSize.set(2048, 2048);
     if (light.shadow.map) { light.shadow.map.dispose(); light.shadow.map = null; } // 强制下一帧重建阴影贴图
     light.shadow.bias = -0.0005;
+    this.requestShadowUpdate();
   }
 
   /** 视角快照 */
@@ -207,7 +227,8 @@ export class SceneCore {
     this.active.up.fromArray(s.up || [0, 1, 0]);
     if (s.kind === 'ortho') { this.ortho.zoom = s.zoom || 1; this.ortho.updateProjectionMatrix(); }
     this.controls.update();
-  }
+  
+    this.requestRender();}
 
   /* ---------- 背景 / 环境 ---------- */
 
@@ -243,13 +264,15 @@ export class SceneCore {
     }
     this.container.style.background = bgMode === 'transparent' ? 'transparent' : '#' + (typeof this.scene.background === 'number' || this.scene.background?.isColor ? this.scene.background.getHexString?.() ?? '17191d' : '17191d');
     if (bgMode === 'gradient') this.container.style.background = '';
-  }
+  
+    this.requestRender();}
 
   setTheme(theme) {
     this.theme = theme;
     if (this.bgMode === 'theme') this.applyBackground('theme', theme);
     if (this.grid) this.recolorGrid();
-  }
+  
+    this.requestRender();}
 
   /* ---------- 网格 / 坐标轴 / 阴影 ---------- */
 
@@ -326,7 +349,8 @@ export class SceneCore {
     this.gridVisible = v;
     if (this.models.length) this.ensureGrid();
     if (this.grid) this.grid.visible = v;
-  }
+  
+    this.requestRender();}
   /** 检测模型自带的地面：水平扁平且较大的平面 */
   detectModelGround() {
     const mainBox = this.smartBoundingBox();
@@ -365,7 +389,9 @@ export class SceneCore {
       if (this.generatedGround) this.generatedGround.visible = false;
       this.syncGridHeight();
     }
-  }
+  
+    this.requestRender();
+    this.requestShadowUpdate();}
 
   ensureGroundGenerated() {
     if (this.generatedGround) return;
@@ -397,7 +423,8 @@ export class SceneCore {
     this.groundHeightOffset = v;
     this.placeGround();
     this.syncGridHeight();
-  }
+  
+    this.requestRender();}
 
   setGroundColor(hex, forceGenerated = false) {
     this.groundColor = hex;
@@ -407,7 +434,9 @@ export class SceneCore {
     if (modelGround) modelGround.visible = false;
     this.generatedGround.material.color.set(hex); // 只换色，不动网格/位置 → 防闪
     this.generatedGround.visible = this.groundVisible;
-  }
+  
+    this.requestRender();
+    this.requestShadowUpdate();}
 
   setAxesVisible(v) {
     this.axesVisible = v;
@@ -416,7 +445,8 @@ export class SceneCore {
       this.scene.add(this.axes);
     }
     if (this.axes) this.axes.visible = v;
-  }
+  
+    this.requestRender();}
 
   /** 增强坐标轴：粗圆柱 + 圆锥箭头 + XYZ 文字标识 */
   createFancyAxes(size) {
@@ -477,10 +507,11 @@ export class SceneCore {
     const box = this.smartBoundingBox();
     if (box && !box.isEmpty()) this.fitShadowCamera(box);
     this.syncGridHeight();
+    this.requestShadowUpdate();
   }
 
-  setExposure(v) { this.renderer.toneMappingExposure = v; }
-  setEnvIntensity(v) { this.scene.environmentIntensity = v; }
+  setExposure(v) { this.renderer.toneMappingExposure = v; this.requestRender(); }
+  setEnvIntensity(v) { this.scene.environmentIntensity = v; this.requestRender(); }
 
   /* ---------- 渲染循环 ---------- */
 
@@ -489,9 +520,18 @@ export class SceneCore {
     const loop = () => {
       requestAnimationFrame(loop);
       const delta = this.clock.getDelta();
-      this.controls.update();
+      // 相机阻尼更新：仅在相机真的变化时标脏
+      const camChanged = this.controls.update();
+      if (camChanged) this.needsRender = true;
       if (onFrame) onFrame(delta);
-      this.renderer.render(this.scene, this.active);
+      // 按需渲染：场景无变化时完全跳过绘制，GPU 占用从持续满载降到接近 0
+      if (this.needsRender || this.continuous) {
+        if (document.hidden) { this.needsRender = true; return; } // 后台不绘制
+        // 动画/转盘时模型在动，阴影需逐帧重算；静止时阴影贴图保持不变
+        if (this.continuous) this.renderer.shadowMap.needsUpdate = true;
+        this.renderer.render(this.scene, this.active);
+        this.needsRender = false;
+      }
     };
     loop();
   }

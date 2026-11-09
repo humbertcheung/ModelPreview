@@ -59,6 +59,9 @@
       <button class="tbtn" id="tb-right-panel" title="显示 / 关闭右侧面板">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
       </button>
+      <button class="tbtn" id="tb-export-views" title="一键导出全部视角 PNG（前/后/左/右/顶/底/45° 共 7 张高分辨率图）">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>
+      </button>
       <button class="tbtn" id="tb-shot" title="导出截图：相机视角高分辨率 PNG（自动隐藏网格，可选透明背景）">
         <svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l2-2h4l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
       </button>
@@ -117,6 +120,7 @@
           <button data-v="right" title="右视图">右</button>
           <button data-v="top" title="顶视图">顶</button>
           <button data-v="bottom" title="底视图">底</button>
+          <button data-v="iso45" title="45° 视角：相机位于左前上方约 45° 俯视（透视）">45°</button>
         </div>
       </div>
       <div class="card">

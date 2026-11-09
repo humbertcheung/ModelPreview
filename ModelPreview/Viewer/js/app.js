@@ -76,33 +76,39 @@ class App {
       this.core.turntableWanted = !this.core.turntableWanted;
       this.core.controls.autoRotate = this.core.turntableWanted;
       $('tb-turntable').classList.toggle('active', this.core.turntableWanted);
+      this.core.continuous = this.core.turntableWanted;
+      this.core.requestRender();
     });
     for (const btn of document.querySelectorAll('#tb-shading .mode-card')) {
       btn.addEventListener('click', () => {
         document.querySelectorAll('#tb-shading .mode-card').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.shading.setMode(btn.dataset.mode, this.core.models, this.core.theme);
+        this.core.requestShadowUpdate();
         this.toast(`渲染模式：${btn.querySelector('.m-title')?.textContent || btn.dataset.mode}`, 1500);
       });
     }
     $('tb-snapshot').addEventListener('click', () => this.saveSnapshot());
     $('tb-export-glb').addEventListener('click', () => this.doExportGLB());
     $('tb-embed').addEventListener('click', () => this.copyEmbedCode());
-    $('tb-left-panel').addEventListener('click', () => {
-      const p = $('left-panel');
-      const show = p.style.display === 'none';
-      p.style.display = show ? '' : 'none';
-      $('tb-left-panel').classList.toggle('active', show);
-    });
-    $('tb-right-panel').addEventListener('click', () => {
-      const p = $('right-panel');
-      const show = p.style.display === 'none';
-      p.style.display = show ? '' : 'none';
-      $('tb-right-panel').classList.toggle('active', show);
-    });
+    // 注意：此处只能绑定一次。历史 bug：bindLeftPanel 里重复注册了同一按钮，
+    // 一次点击触发两次 toggle 互相抵消，导致「显示/关闭面板」看起来完全失效。
+    $('tb-left-panel').addEventListener('click', () => this.togglePanel('left-panel', 'tb-left-panel'));
+    $('tb-right-panel').addEventListener('click', () => this.togglePanel('right-panel', 'tb-right-panel'));
     $('tb-shot').addEventListener('click', () => this.screenshot());
+    $('tb-export-views').addEventListener('click', () => this.exportAllViews());
     $('tb-theme').addEventListener('click', () => this.setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark'));
     postToNative({ type: 'topbar-ready' });
+  }
+
+  /** 显示/关闭左右面板（宽度保持不变，仅隐藏内容） */
+  togglePanel(panelId, btnId) {
+    const p = $(panelId);
+    const show = p.style.display === 'none';
+    p.style.display = show ? '' : 'none';
+    $(btnId).classList.toggle('active', show);
+    this.core.requestRender();
+    this.core.resize();
   }
 
   /* ---------- 左面板 ---------- */
@@ -113,21 +119,7 @@ class App {
       if (e.target.checked && this.core.groundMode === 'generated') this.showGroundNote('使用系统地面');
       else this.hideGroundNote();
     });
-    $('bg-reset').addEventListener('click', () => { this.core.groundMode = 'auto'; });
     this.bindQlSettings();
-    // 左右面板显示/关闭
-    $('tb-left-panel').addEventListener('click', () => {
-      const p = $('left-panel');
-      const show = p.style.display === 'none';
-      p.style.display = show ? '' : 'none';
-      $('tb-left-panel').classList.toggle('active', show);
-    });
-    $('tb-right-panel').addEventListener('click', () => {
-      const p = $('right-panel');
-      const show = p.style.display === 'none';
-      p.style.display = show ? '' : 'none';
-      $('tb-right-panel').classList.toggle('active', show);
-    });
     // 空格预览设置：展开/折叠（默认折叠）
     $('ql-settings-toggle').addEventListener('click', () => {
       const card = $('ql-settings-card');
@@ -162,7 +154,10 @@ class App {
         } });
       } catch { /* 诊断不影响主流程 */ }
     });
-    $('opt-edges').addEventListener('change', e => this.shading.setEdges(e.target.checked, this.core.models, this.core.theme));
+    $('opt-edges').addEventListener('change', e => {
+      this.shading.setEdges(e.target.checked, this.core.models, this.core.theme);
+      this.core.requestRender();
+    });
     $('sl-ground-h').addEventListener('input', e => {
       const v = +e.target.value;
       $('v-ground-h').textContent = fmtNum1(v / 10); // 负零归一
@@ -288,10 +283,12 @@ class App {
     $('anim-play').addEventListener('click', () => {
       if (!this.anim.mixer) return;
       if (this.anim.playing) this.anim.pause(); else this.anim.play();
+      this.core.continuous = this.anim.playing;
+      this.core.requestRender();
       this.syncAnimUI();
     });
     $('anim-clip').addEventListener('change', e => this.anim.selectClip(+e.target.value));
-    $('anim-time').addEventListener('input', e => this.anim.seek(+e.target.value / 1000));
+    $('anim-time').addEventListener('input', e => { this.anim.seek(+e.target.value / 1000); this.core.requestRender(); });
     $('anim-speed-sel').addEventListener('change', e => this.anim.setSpeed(+e.target.value));
     $('anim-loop-chk').addEventListener('change', e => this.anim.setLoop(e.target.checked));
   }
@@ -413,6 +410,7 @@ class App {
 
     if (warnings.length) this.toast(warnings.slice(0, 2).join('；'), 3500);
     this.core.resetView();
+    this.core.requestShadowUpdate();
     this.syncGroundRow();
     this.hideLoading();
     this.hideError();
@@ -602,6 +600,7 @@ class App {
     if (this.core.grid) this.core.grid.visible = savedGrid;
     if (this.core.axes) this.core.axes.visible = this.core.axesVisible;
     this.core.renderer.render(this.core.scene, this.core.active);
+    this.core.requestRender();
 
     const name = (this.currentName || 'model').replace(/\.[^.]+$/, '') + '.png';
     if (bridge) postToNative({ type: 'screenshot', name, data });
@@ -609,6 +608,57 @@ class App {
       const a = document.createElement('a');
       a.href = data; a.download = name; a.click();
       this.toast(`已导出 ${Math.round(w * 3)}×${Math.round(h * 3)} 截图`);
+    }
+  }
+
+  /** 一键导出所有预设视角（前/后/左/右/顶/底/45°）的高分辨率 PNG */
+  async exportAllViews() {
+    if (!this.core.models.length) { this.toast('请先加载模型'); return; }
+    const views = [
+      { key: 'front', label: '前' }, { key: 'back', label: '后' },
+      { key: 'left', label: '左' }, { key: 'right', label: '右' },
+      { key: 'top', label: '顶' }, { key: 'bottom', label: '底' },
+      { key: 'iso45', label: '45度' },
+    ];
+    const base = (this.currentName || 'model').replace(/\.[^.]+$/, '');
+    // 保存当前视角与显示状态，导出后完整恢复
+    const saved = this.core.snapshot();
+    const savedGrid = this.core.gridVisible, savedAxes = this.core.axesVisible;
+    const savedBg = this.core.scene.background;
+    if (this.core.grid) this.core.grid.visible = false;
+    if (this.core.axes) this.core.axes.visible = false;
+
+    const w = this.core.container.clientWidth || 800, h = this.core.container.clientHeight || 600;
+    const prevPR = this.core.renderer.getPixelRatio();
+    this.core.renderer.setPixelRatio(3);
+    this.core.renderer.setSize(w, h, false);
+
+    const images = [];
+    this.showLoading('正在导出 7 个视角…');
+    for (const v of views) {
+      this.core.setPresetView(v.key);
+      this.core.renderer.render(this.core.scene, this.core.active);
+      const data = this.core.renderer.domElement.toDataURL('image/png');
+      images.push({ view: v.key, label: v.label, name: `${base}-${v.label}.png`, data });
+      await new Promise(r => setTimeout(r, 0)); // 让出主线程，保持界面响应
+    }
+
+    // 恢复现场
+    this.core.renderer.setPixelRatio(prevPR);
+    this.core.renderer.setSize(w, h, false);
+    this.core.scene.background = savedBg;
+    if (this.core.grid) this.core.grid.visible = savedGrid;
+    if (this.core.axes) this.core.axes.visible = savedAxes;
+    this.core.restoreSnapshot(saved);
+    this.core.requestShadowUpdate();
+    this.hideLoading();
+
+    if (bridge) {
+      postToNative({ type: 'export-views', name: base, images });
+      this.toast(`已生成 ${images.length} 张视角图，正在保存…`);
+    } else {
+      for (const im of images) { const a = document.createElement('a'); a.href = im.data; a.download = im.name; a.click(); }
+      this.toast(`已导出 ${images.length} 张视角图`);
     }
   }
 
@@ -782,6 +832,10 @@ class App {
 
   onFrame(delta) {
     const animState = this.anim.update(delta);
+    // 动画播放 / 自动旋转期间需要逐帧渲染
+    const animating = !!(animState && this.anim.playing);
+    this.core.continuous = animating || this.core.turntableWanted;
+    if (animating) this.core.requestRender();
     if (animState && this.anim.playing) {
       const now = performance.now();
       if (!this._lastAnimUi || now - this._lastAnimUi > 100) {

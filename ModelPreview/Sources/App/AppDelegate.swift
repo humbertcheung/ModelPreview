@@ -235,6 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         case "export-glb":
             saveExportGLB(name: body["name"] as? String ?? "model-export.glb",
                           dataURL: body["data"] as? String ?? "")
+        case "export-views":
+            saveAllViews(name: body["name"] as? String ?? "model",
+                         images: body["images"] as? [[String: Any]] ?? [])
         case "open-panel":
             pickFile(append: body["append"] as? Bool ?? false)
         case "theme":
@@ -275,8 +278,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    private func saveScreenshot(name: String, dataURL: String) {
-        guard let b64 = dataURL.components(separatedBy: ",").last,
+    /// 一键导出全部视角 PNG：让用户选择文件夹，写入 7 张图后直接在访达中显示
+    private func saveAllViews(name: String, images: [[String: Any]]) {
+        guard !images.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "导出到此处"
+        panel.message = "选择用于保存 \(images.count) 张视角图的文件夹"
+        panel.beginSheetModal(for: window) { [weak self] resp in
+            guard let self, resp == .OK, let dir = panel.url else { return }
+            var written: [URL] = []
+            for img in images {
+                let fileName = (img["name"] as? String) ?? "\(name).png"
+                let dataURL = (img["data"] as? String) ?? ""
+                guard let b64 = dataURL.components(separatedBy: ",").last,
+                      let data = Data(base64Encoded: b64) else { continue }
+                let dest = dir.appendingPathComponent(fileName)
+                do {
+                    try data.write(to: dest)
+                    written.append(dest)
+                } catch {
+                    NSAlert(error: error).runModal()
+                }
+            }
+            if !written.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(written)
+                self.appendMsgLog("EXPORT-VIEWS wrote \(written.count) files to \(dir.path)")
+            }
+        }
+    }
+
+    private func saveScreenshot(name: String, dataURL: String) {        guard let b64 = dataURL.components(separatedBy: ",").last,
               let data = Data(base64Encoded: b64) else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]

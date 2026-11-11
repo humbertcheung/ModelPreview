@@ -89,6 +89,13 @@ class App {
       });
     }
     $('tb-snapshot').addEventListener('click', () => this.saveSnapshot());
+    // 结构树：单独查看 / 聚焦
+    $('tree-isolate').addEventListener('click', () => this.toggleIsolate());
+    $('tree-fit').addEventListener('click', () => this.focusSelected());
+    // 视图适配：位置 + 比例 / 位置 / 比例
+    $('fit-all').addEventListener('click', () => this.fitModel('all'));
+    $('fit-pos').addEventListener('click', () => this.fitModel('position'));
+    $('fit-scale').addEventListener('click', () => this.fitModel('scale'));
     $('tb-export-glb').addEventListener('click', () => this.doExportGLB());
     $('tb-embed').addEventListener('click', () => this.copyEmbedCode());
     // 注意：此处只能绑定一次。历史 bug：bindLeftPanel 里重复注册了同一按钮，
@@ -111,6 +118,60 @@ class App {
     this.core.resize();
   }
 
+  /* ---------- 最近打开（数据由原生侧持久化到磁盘） ---------- */
+
+  /** 接收原生推送的最近文件列表 */
+  setRecentFiles(list) {
+    this.recentFiles = Array.isArray(list) ? list : [];
+    this.renderRecent();
+  }
+
+  renderRecent() {
+    const el = $('recent-list');
+    if (!el) return;
+    const list = this.recentFiles || [];
+    if (!list.length) {
+      el.innerHTML = '<div class="recent-empty">暂无记录</div>';
+      return;
+    }
+    el.innerHTML = '';
+    list.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'recent-item';
+      const name = item.name || '未命名';
+      const ext = (name.split('.').pop() || '').slice(0, 4).toUpperCase();
+      const dir = (item.path || '').replace(/\/[^/]+$/, '');
+      div.innerHTML = `<span class="r-icon"></span><span class="r-main"><span class="r-name"></span><span class="r-path"></span></span>`;
+      div.querySelector('.r-icon').textContent = ext;
+      div.querySelector('.r-name').textContent = name;
+      div.querySelector('.r-path').textContent = dir;
+      div.title = item.path || '';
+      div.addEventListener('click', () => {
+        this.closeRecentMenu();
+        if (bridge) postToNative({ type: 'open-recent', path: item.path });
+        else this.toast('浏览器模式无法直接打开本地文件');
+      });
+      el.appendChild(div);
+    });
+  }
+
+  toggleRecentMenu() {
+    const m = $('recent-menu');
+    const btn = $('tb-recent');
+    if (!m || !btn) return;
+    if (!m.hasAttribute('hidden')) { m.setAttribute('hidden', ''); return; }
+    this.renderRecent();
+    m.removeAttribute('hidden');
+    // fixed 定位需按按钮实际位置计算，避免被 topbar 的 overflow 裁切
+    const r = btn.getBoundingClientRect();
+    const w = m.offsetWidth || 340;
+    const maxLeft = Math.max(8, window.innerWidth - w - 8);
+    const left = Math.min(Math.max(8, r.left), maxLeft);
+    m.style.left = left + 'px';
+    m.style.top = (r.bottom + 8) + 'px';
+  }
+  closeRecentMenu() { $('recent-menu')?.setAttribute('hidden', ''); }
+
   /* ---------- 左面板 ---------- */
 
   bindLeftPanel() {
@@ -120,6 +181,31 @@ class App {
       else this.hideGroundNote();
     });
     this.bindQlSettings();
+    // 最近打开（顶栏下拉）
+    this.recentFiles = [];
+    this.renderRecent();
+    $('tb-recent').addEventListener('click', (e) => { e.stopPropagation(); this.toggleRecentMenu(); });
+    $('recent-clear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (bridge) postToNative({ type: 'recent-clear' });
+      this.recentFiles = [];
+      this.renderRecent();
+      this.toast('最近打开记录已清空');
+    });
+    // 窗口尺寸变化时重新定位菜单
+    window.addEventListener('resize', () => {
+      const m = $('recent-menu');
+      if (m && !m.hasAttribute('hidden')) { m.setAttribute('hidden', ''); this.toggleRecentMenu(); }
+    });
+    // 点击菜单外部关闭
+    document.addEventListener('click', (e) => {
+      const m = $('recent-menu');
+      if (m && !m.hasAttribute('hidden') && !m.contains(e.target) && e.target !== $('tb-recent')) {
+        this.closeRecentMenu();
+      }
+    });
+    this.recentFiles = [];
+    this.renderRecent();
     // 空格预览设置：展开/折叠（默认折叠）
     $('ql-settings-toggle').addEventListener('click', () => {
       const card = $('ql-settings-card');
@@ -257,6 +343,7 @@ class App {
     return {
       qlGroundEnabled: $('set-ql-ground').checked,
       qlGroundColor: document.querySelector('#ql-ground-colors .gswatch.active')?.dataset.c || '#ffffff',
+      flipTextureV: $('set-ql-flip')?.checked ?? false,
       qlHideBackdrop: $('set-ql-hidebackdrop').checked,
     };
   }
@@ -266,6 +353,7 @@ class App {
       if (!s) return;
       $('set-ql-ground').checked = s.qlGroundEnabled !== false;
       $('set-ql-hidebackdrop').checked = s.qlHideBackdrop !== false;
+      $('set-ql-flip').checked = s.flipTextureV === true;
       document.querySelectorAll('#ql-ground-colors .gswatch').forEach(b =>
         b.classList.toggle('active', b.dataset.c === (s.qlGroundColor || '#ffffff')));
     };
@@ -280,6 +368,7 @@ class App {
     };
     $('set-ql-ground').addEventListener('change', handler);
     $('set-ql-hidebackdrop').addEventListener('change', handler);
+    $('set-ql-flip').addEventListener('change', handler);
     document.querySelectorAll('#ql-ground-colors .gswatch').forEach(b => b.addEventListener('click', () => {
       document.querySelectorAll('#ql-ground-colors .gswatch').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
@@ -419,11 +508,6 @@ class App {
 
   addModelResult(result, opts = {}) {
     const { root, animations, warnings } = result;
-    // 居中：底面贴网格
-    const box = new THREE.Box3().setFromObject(root);
-    const center = box.getCenter(new THREE.Vector3());
-    root.position.x -= center.x; root.position.z -= center.z; root.position.y -= box.min.y;
-
     root.traverse(o => { if (o.isMesh) { o.userData.shadowWanted = true; } });
 
     this.clearImageView();
@@ -431,6 +515,10 @@ class App {
     const id = THREE.MathUtils.generateUUID();
     this.core.models.push({ id, root, name: opts.name || 'model' });
     this.core.scene.add(root);
+
+    // 注意：此处不做任何位置/比例调整 —— 模型打开时必须保持文件的原始变换。
+    // 需要规整位置/比例时，由用户在左侧「视图适配」中主动点击（位置 / 比例 / 位置+比例）。
+    // 相机取景会自动对准模型主体，保证打开即可见，但不会改动模型本身。
     this.core.refreshPickables();
     this.core.ensureGrid();
 
@@ -451,6 +539,7 @@ class App {
     }
 
     this.refreshStats(opts.size);
+    this.syncOutlinerAxes();
     this.outliner.build(this.core.models);
     if (this.shading.mode !== 'shaded' || this.shading.wireframe) this.shading.apply(this.core.models, this.core.theme);
     if (this.shading.edges) this.shading.setEdges(true, this.core.models, this.core.theme);
@@ -531,7 +620,17 @@ class App {
     document.getElementById('tb-cam-kind').disabled = !has;
   }
 
-  refreshStats(sizeBytes) {
+  /** 刷新结构树的位置标注数据（模型朝向/包围盒） */
+  syncOutlinerAxes() {
+    const axes = this.core.modelAxes?.();
+    const box = this.core.smartBoundingBox?.();
+    if (this.outliner) {
+      this.outliner.axesProvider = () => this.core.modelAxes?.() || null;
+      this.outliner.modelBox = (box && !box.isEmpty()) ? box.clone() : null;
+    }
+  }
+
+  refreshStats(sizeBytes = 0) {
     const st = this.core.models.length ? computeStats(this.core.models[0].root, this.core.models.slice(1)) : null;
     const fmt = (v) => v == null ? '—' : v >= 1e6 ? (v / 1e6).toFixed(2) + ' M' : v >= 1e3 ? (v / 1e3).toFixed(1) + ' k' : String(v);
     let sizeText = '—';
@@ -594,6 +693,112 @@ class App {
   persistSnaps(list) {
     try { localStorage.setItem('mp3d-snaps', JSON.stringify(list)); } catch { /* QL 无存储 */ }
   }
+  /** 视图适配：把模型调整到合适的位置与比例
+   *  mode: 'all'（位置+比例）| 'position'（仅居中）| 'scale'（仅归一化尺寸）
+   *  - 位置：包围盒中心移到原点（模型位于视图正中心）
+   *  - 比例：包围盒最大边归一化为 1（标准尺寸，各模型观感一致）
+   */
+  fitModel(mode = 'all') {
+    if (!this.core.models.length) { this.toast('请先加载模型'); return; }
+    for (const m of this.core.models) {
+      m.root.updateMatrixWorld(true);
+      // 用主体包围盒（排除离群件），否则适配会按背景板尺寸计算 → 看起来毫无变化
+      const box = this.core.smartBoundingBox();
+      if (!box || box.isEmpty()) continue;
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+      if (mode === 'all' || mode === 'scale') {
+        // 缩放到标准尺寸（包围盒最大边 = 1），各模型观感一致
+        m.root.scale.multiplyScalar(1 / maxDim);
+        m.root.updateMatrixWorld(true);
+      }
+      if (mode === 'all' || mode === 'position') {
+        // 水平居中（X/Z），竖直方向底面对齐到 0（模型坐在地面上，符合预览惯例）
+        m.root.updateMatrixWorld(true);
+        const b2 = this.core.smartBoundingBox();
+        if (!b2 || b2.isEmpty()) continue;
+        const c2 = b2.getCenter(new THREE.Vector3());
+        m.root.position.x -= c2.x;
+        m.root.position.z -= c2.z;
+        m.root.position.y -= b2.min.y;
+      }
+      m.root.updateMatrixWorld(true);
+    }
+    // 重新取景并刷新阴影
+    this.core.resetView();
+    this.core.requestShadowUpdate();
+    this.core.requestRender();
+    this.syncOutlinerAxes();
+    const label = mode === 'all' ? '位置与比例' : mode === 'position' ? '位置' : '比例';
+    this.toast(`已调整模型${label}`);
+  }
+
+  /** 单独查看：仅显示当前选中的部件（再次点击恢复全部并还原相机）
+   *  进入时清除材质高亮；退出时恢复进入前的相机位置/比例 */
+  toggleIsolate() {
+    const btn = $('tree-isolate');
+    // 先处理「恢复」：此分支不能依赖 selected（进入单独查看时可能已清空）
+    if (this._isolated) {
+      clearIsolate(this.core.models);
+      this._isolated = false;
+      btn.classList.remove('on');
+      btn.textContent = '单独查看';
+      // 还原进入单独查看之前的相机（位置/目标/缩放），否则模型比例停留在放大状态
+      if (this._isoSnapshot) {
+        this.core.restoreSnapshot(this._isoSnapshot);
+        this._isoSnapshot = null;
+      }
+      this.core.requestShadowUpdate();
+      this.core.requestRender();
+      this.toast('已恢复全部部件');
+      return;
+    }
+    const nodes = [...(this.outliner?.selected || [])];
+    if (!nodes.length) { this.toast('请先在结构树中选择部件'); return; }
+    // 记录相机状态，退出时还原
+    this._isoSnapshot = this.core.snapshot();
+    isolate(this.core.models, nodes);
+    this._isolated = true;
+    btn.classList.add('on');
+    btn.textContent = '显示全部';
+    // 去掉蓝色 emissive 高亮（单独查看时不应被高亮覆盖真实材质）
+    setHighlight(nodes, false);
+    this.focusSelected(true);
+    this.core.requestShadowUpdate();
+    this.core.requestRender();
+    this.toast(`仅显示 ${nodes.length} 个部件`);
+  }
+
+  /** 聚焦：把相机对准选中部件的包围盒（同时取消高亮，便于观察真实材质） */
+  focusSelected(silent = false) {
+    const nodes = [...(this.outliner?.selected || [])];
+    if (!nodes.length) { if (!silent) this.toast('请先在结构树中选择部件'); return; }
+    setHighlight(nodes, false); // 仅清除材质高亮，保留结构树选中态
+    const box = new THREE.Box3();
+    let any = false;
+    for (const n of nodes) {
+      n.updateMatrixWorld(true);
+      const b = new THREE.Box3().setFromObject(n);
+      if (!b.isEmpty()) { box.union(b); any = true; }
+    }
+    if (!any) { if (!silent) this.toast('选中部件没有可显示的几何'); return; }
+    const size = box.getSize(new THREE.Vector3());
+    const ctr = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const dist = (maxDim / 2) / Math.tan((50 * Math.PI / 180) / 2) * 1.6;
+    // 保持当前观察方向，只把相机移到目标中心
+    const dir = this.core.active.position.clone().sub(this.core.controls.target).normalize();
+    this.core.active.position.copy(ctr).addScaledVector(dir, dist);
+    this.core.controls.target.copy(ctr);
+    this.core.controls.update();
+    // 正交相机：视锥大小与相机距离无关，需按部件尺寸单独适配，
+    // 否则部件会被视锥裁切（看起来「不完整」）
+    this.core.fitOrthoToSize(maxDim);
+    this.core.requestRender();
+    if (!silent) this.toast('已聚焦到选中部件');
+  }
+
   saveSnapshot() {
     if (!this.core.models.length) { this.toast('请先加载模型'); return; }
     const list = this.loadSnapshots();
@@ -1002,6 +1207,9 @@ window.viewer.setPerf = (d) => {
   set('sb-mem', mem == null ? '—' : (mem >= 1024 ? (mem / 1024).toFixed(1) + ' GB' : Math.round(mem) + ' MB'), mem != null && mem > 2048);
 };
 
+// 原生推送最近文件列表
+window.viewer.setRecentFiles = (list) => { app.setRecentFiles(list); };
+
 window.viewer.onExportViewsDone = (path, count) => {
   if (!path || !count) { app.toast('未导出任何图片', 3000); return; }
   app.toast(`已导出 ${count} 张视角图\n保存位置：${path}`, 9000);
@@ -1012,6 +1220,7 @@ window.viewer.applyQlSettingsB64 = (b64) => {
     const json = JSON.parse(new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
     $('set-ql-ground').checked = json.qlGroundEnabled !== false;
     $('set-ql-hidebackdrop').checked = json.qlHideBackdrop !== false;
+    $('set-ql-flip').checked = json.flipTextureV === true;
     document.querySelectorAll('#ql-ground-colors .gswatch').forEach(b =>
       b.classList.toggle('active', b.dataset.c === (json.qlGroundColor || '#ffffff')));
   } catch (e) { /* 忽略 */ }

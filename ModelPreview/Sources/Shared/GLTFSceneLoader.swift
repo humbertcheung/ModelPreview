@@ -17,19 +17,23 @@ enum GLTFSceneLoader {
         }
     }
 
-    static func load(from url: URL) throws -> SCNScene {
+    /// 贴图垂直翻转（由调用方按用户设置传入；QL 单线程加载，静态传递安全）
+    private static var flipTextureV = false
+
+    static func load(from url: URL, flipTextureV: Bool = false) throws -> SCNScene {
+        Self.flipTextureV = flipTextureV
         let data = try Data(contentsOf: url)
         if url.pathExtension.lowercased() == "glb" {
             let (jsonData, bin) = try splitGLB(data)
             guard let json = (try? JSONSerialization.jsonObject(with: jsonData)) as? [String: Any] else {
                 throw LoadError.badFormat("JSON chunk 解析失败")
             }
-            return try build(json: json, bin: bin, baseURL: url.deletingLastPathComponent())
+            return try build(json: json, bin: bin, baseURL: url.deletingLastPathComponent(), flipTextureV: flipTextureV)
         }
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw LoadError.badFormat("JSON 解析失败")
         }
-        return try build(json: json, bin: nil, baseURL: url.deletingLastPathComponent())
+        return try build(json: json, bin: nil, baseURL: url.deletingLastPathComponent(), flipTextureV: flipTextureV)
     }
 
     // MARK: - GLB 拆包
@@ -58,7 +62,7 @@ enum GLTFSceneLoader {
 
     // MARK: - 场景构建
 
-    private static func build(json: [String: Any], bin: Data?, baseURL: URL) throws -> SCNScene {
+    private static func build(json: [String: Any], bin: Data?, baseURL: URL, flipTextureV: Bool) throws -> SCNScene {
         let ctx = Ctx(json: json, bin: bin, baseURL: baseURL)
         let scene = SCNScene()
 
@@ -236,7 +240,9 @@ enum GLTFSceneLoader {
 
             var sources: [SCNGeometrySource] = [makeSource(pos, semantic: .vertex)]
             if let nrm = attrib(attrs, "NORMAL") { sources.append(makeSource(nrm, semantic: .normal)) }
-            if let uv = attrib(attrs, "TEXCOORD_0", flipV: true) { sources.append(makeSource(uv, semantic: .texcoord)) }
+            // 贴图垂直方向：与导出器/处理管线有关（Blender 直出与部分 AI 管线产物相反），
+                // 由调用方通过设置传入；用户可在「空格预览设置」中切换
+                if let uv = attrib(attrs, "TEXCOORD_0", flipV: flipTextureV) { sources.append(makeSource(uv, semantic: .texcoord)) }
             if let col = attrib(attrs, "COLOR_0"), col.comps >= 3 { sources.append(makeSource(col, semantic: .color)) }
 
             let mode = (prim["mode"] as? NSNumber)?.intValue ?? 4  // glTF 默认 mode=4 TRIANGLES

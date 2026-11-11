@@ -52,6 +52,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 v.rendersContinuously = true
                 self.scnView = v
                 self.view.addSubview(v)
+                // 大模型解析期间显示加载动画，避免长时间黑屏无反馈
+                self.showLoadingIndicator(text: "正在载入模型…")
                 self.dbg("placeholder SCNView mounted for .\(ext)")
             }
         }
@@ -62,7 +64,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
             switch ext {
             case "glb", "gltf":
-                self.mountScene { try GLTFSceneLoader.load(from: url) }
+                let flipV = Self.loadQlSettings().flipTextureV
+                self.mountScene { try GLTFSceneLoader.load(from: url, flipTextureV: flipV) }
             case "obj", "stl", "ply":
                 self.mountScene { try Self.loadWithModelIO(url) }
             case "dae":
@@ -78,7 +81,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 let cached = BlendPipeline.cachedGLB(for: url)
                 dbg("blend: cache \(cached != nil ? "HIT \(cached!.lastPathComponent)" : "miss")")
                 if let cached {
-                    mountScene { try GLTFSceneLoader.load(from: cached) }
+                    let flipV2 = Self.loadQlSettings().flipTextureV
+                    mountScene { try GLTFSceneLoader.load(from: cached, flipTextureV: flipV2) }
                     return
                 }
                 // 2) .blend 内嵌缩略图（移除占位 SCNView 后显示）
@@ -87,6 +91,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 dbg("blend: thumbnail \(image != nil ? "OK" : "none")")
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
+                    self.hideLoadingIndicator()
                     self.scnView?.removeFromSuperview()
                     self.scnView = nil
                     let content: NSView
@@ -113,6 +118,45 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     private var scnView: SCNView?
 
+    // MARK: - 加载指示器（大模型解析期间的反馈，避免长时间黑屏）
+
+    private var loadingView: NSView?
+
+    /// 显示旋转加载指示器 + 文字提示
+    private func showLoadingIndicator(text: String) {
+        guard loadingView == nil else { return }
+        let box = NSView(frame: self.view.bounds)
+        box.autoresizingMask = [.width, .height]
+        box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor(red: 0.09, green: 0.10, blue: 0.11, alpha: 1).cgColor
+
+        let spinner = LoadingSpinner(frame: NSRect(x: 0, y: 0, width: 46, height: 46))
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(spinner)
+
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        label.textColor = NSColor.white.withAlphaComponent(0.72)
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        box.addSubview(label)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: box.centerYAnchor, constant: -14),
+            label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 14),
+            label.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+        ])
+
+        self.view.addSubview(box)
+        loadingView = box
+    }
+
+    private func hideLoadingIndicator() {
+        loadingView?.removeFromSuperview()
+        loadingView = nil
+    }
+
     private func replaceContent(with content: NSView) {
         content.frame = view.bounds
         content.autoresizingMask = [.width, .height]
@@ -123,6 +167,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         var groundEnabled = true
         var groundColorHex = "#ffffff"
         var hideBackdrop = true
+        var flipTextureV = false   // 贴图垂直翻转：与导出管线有关，色彩错乱时可切换
     }
 
     static func loadQlSettings() -> QlSettings {
@@ -132,7 +177,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return QlSettings() }
         return QlSettings(groundEnabled: j["qlGroundEnabled"] as? Bool ?? true,
                           groundColorHex: j["qlGroundColor"] as? String ?? "#ffffff",
-                          hideBackdrop: j["qlHideBackdrop"] as? Bool ?? true)
+                          hideBackdrop: j["qlHideBackdrop"] as? Bool ?? true,
+                          flipTextureV: j["flipTextureV"] as? Bool ?? false)
     }
 
     static func colorFromHex(_ hex: String) -> NSColor {
@@ -197,12 +243,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 // 它会同步编译全部着色器，大模型（数十万面）会阻塞主线程数秒，
                 // 直接导致空格预览/选中预览打开变慢。
                 v.display()
+                self.hideLoadingIndicator()
                 self.dbg("scene mounted: nodes=\(scene.rootNode.childNodes.count)")
             }
         } catch {
             dbg("scene load fail: \(error.localizedDescription)")
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.scnView == nil else { return }
+                guard let self else { return }
+                self.hideLoadingIndicator()
+                guard self.scnView == nil else { return }
                 self.replaceContent(with: self.infoView(title: "无法解析模型", detail: error.localizedDescription))
             }
         }
@@ -347,4 +396,83 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         ])
         return holder
     }
+}
+
+
+/// 简单的旋转加载指示器（纯 CoreAnimation，无额外依赖）
+/// 注意：不要用 CATransform3DMakeRotation 旋转整个 layer —— 在有 perspective 的层里
+/// 会表现为绕轴公转而非面内自转。这里改为旋转「描边起始角」，
+/// 保证始终是面内旋转的圆弧进度。
+final class LoadingSpinner: NSView {
+    private let trackLayer = CAShapeLayer()
+    private let headLayer = CAShapeLayer()
+    private let headGradient = CAGradientLayer()
+    private var timer: Timer?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        let r = min(frameRect.width, frameRect.height) / 2 - 3
+        let path = NSBezierPath(ovalIn: NSRect(x: frameRect.midX - r, y: frameRect.midY - r, width: r * 2, height: r * 2))
+        let cgPath = path.cgPath
+
+        trackLayer.path = cgPath
+        trackLayer.fillColor = NSColor.clear.cgColor
+        trackLayer.strokeColor = NSColor.white.withAlphaComponent(0.14).cgColor
+        trackLayer.lineWidth = 3
+        trackLayer.lineCap = .round
+        layer?.addSublayer(trackLayer)
+
+        headLayer.path = cgPath
+        headLayer.fillColor = NSColor.clear.cgColor
+        headLayer.strokeColor = NSColor(red: 0.31, green: 0.49, blue: 1.0, alpha: 1).cgColor
+        headLayer.lineWidth = 3
+        headLayer.lineCap = .round
+        headLayer.strokeStart = 0
+        headLayer.strokeEnd = 0.25
+        layer?.addSublayer(headLayer)
+
+        startAnimating()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        let r = min(bounds.width, bounds.height) / 2 - 3
+        let path = NSBezierPath(ovalIn: NSRect(x: bounds.midX - r, y: bounds.midY - r, width: r * 2, height: r * 2))
+        trackLayer.path = path.cgPath
+        headLayer.path = path.cgPath
+        trackLayer.frame = bounds
+        headLayer.frame = bounds
+    }
+
+    private func startAnimating() {
+        stopAnimating()
+        // CADisplayLink 的 target/selector 初始化在 macOS 不可用，改用 Timer 驱动
+        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            self?.step()
+        }
+        t.tolerance = 0.005
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    private func stopAnimating() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// 圆弧「头部」沿圆周前进：起点增加、终点跟随 —— 视觉上是面内旋转的进度环
+    private func step() {
+        let span: CGFloat = 0.25
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        headLayer.strokeStart = headLayer.strokeStart + span
+        if headLayer.strokeStart > 1 - span { headLayer.strokeStart = 0 }
+        headLayer.strokeEnd = headLayer.strokeStart + span
+        if headLayer.strokeEnd > 1 { headLayer.strokeEnd = 1 }
+        CATransaction.commit()
+    }
+
+    deinit { stopAnimating() }
 }

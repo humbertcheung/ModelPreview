@@ -22,6 +22,18 @@
       <button class="tbtn" id="tb-open" title="打开模型文件（本地解析，不上传）">
         <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       </button>
+      <div class="recent-wrap">
+        <button class="tbtn" id="tb-recent" title="最近打开的文件">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        </button>
+        <div class="recent-menu" id="recent-menu" hidden>
+          <div class="recent-menu-title">最近打开</div>
+          <div class="recent-menu-list" id="recent-list"></div>
+          <div class="recent-menu-foot">
+            <button class="mini-btn" id="recent-clear">清空记录</button>
+          </div>
+        </div>
+      </div>
       <button class="tbtn" id="tb-append" title="合并打开：将模型追加到当前场景">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>合并</span>
       </button>
@@ -76,21 +88,12 @@
     <!-- 左面板：显示 / 背景 / 后处理 -->
     <aside id="left-panel" class="panel">
       <div class="panel-scroll">
-      <div class="card">
-        <div class="card-title">渲染模式</div>
-        <div class="mode-grid" id="tb-shading">
-          <button class="mode-card active" data-mode="shaded" title="PBR 实体渲染">
-            <div class="m-title">着色</div><div class="m-sub">PBR 实体</div>
-          </button>
-          <button class="mode-card" data-mode="normal" title="顶点法线显示">
-            <div class="m-title">法线</div><div class="m-sub">Normals</div>
-          </button>
-          <button class="mode-card" data-mode="wire" title="线框显示">
-            <div class="m-title">线框</div><div class="m-sub">Wireframe</div>
-          </button>
-          <button class="mode-card" data-mode="xray" title="X 光透视">
-            <div class="m-title">X 光</div><div class="m-sub">X-Ray</div>
-          </button>
+      <div class="card" id="fit-card">
+        <div class="card-title">视图适配</div>
+        <div class="fit-btns">
+          <button class="mini-btn wide" id="fit-all" title="将模型居中，并按标准尺寸缩放">位置+比例</button>
+          <button class="mini-btn wide" id="fit-pos" title="仅将模型移动到视图中心">位置</button>
+          <button class="mini-btn wide" id="fit-scale" title="仅将模型缩放到标准大小">比例</button>
         </div>
       </div>
       <div class="card">
@@ -162,7 +165,8 @@
           <button class="gswatch" data-c="#454a52" style="background:#454a52" title="深灰"></button>
         </div>
         <div class="row" style="margin-top:4px"><label for="set-ql-hidebackdrop">隐藏巨大背景面</label><label class="toggle"><input type="checkbox" id="set-ql-hidebackdrop" checked><span class="knob"></span></label></div>
-        <div style="font-size:10.5px;color:var(--text-faint);line-height:1.5;margin-top:4px">以上设置对「选中预览 / 空格预览」生效，保存在本机。</div>
+        <div class="row" style="margin-top:4px"><label for="set-ql-flip" title="若空格预览中模型颜色错乱，切换此选项">贴图上下翻转</label><label class="toggle"><input type="checkbox" id="set-ql-flip"><span class="knob"></span></label></div>
+        <div style="font-size:10.5px;color:var(--text-faint);line-height:1.5;margin-top:4px">以上设置对「选中预览 / 空格预览」生效，保存在本机。颜色错乱时请切换「贴图上下翻转」。</div>
         </div>
       </div>
       </div>
@@ -194,6 +198,23 @@
         <div id="file-note" class="hidden"></div>
       </div>
       <div class="card">
+        <div class="card-title">渲染模式</div>
+        <div class="mode-grid" id="tb-shading">
+          <button class="mode-card active" data-mode="shaded" title="PBR 实体渲染">
+            <div class="m-title">着色</div><div class="m-sub">PBR 实体</div>
+          </button>
+          <button class="mode-card" data-mode="normal" title="顶点法线显示">
+            <div class="m-title">法线</div><div class="m-sub">Normals</div>
+          </button>
+          <button class="mode-card" data-mode="wire" title="线框显示">
+            <div class="m-title">线框</div><div class="m-sub">Wireframe</div>
+          </button>
+          <button class="mode-card" data-mode="xray" title="X 光透视">
+            <div class="m-title">X 光</div><div class="m-sub">X-Ray</div>
+          </button>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-title">模型信息</div>
         <div class="stats-grid">
           <div class="stat"><span class="stat-label">顶点</span><span class="stat-value" id="st-vertices">—</span></div>
@@ -205,7 +226,12 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">结构树</div>
+        <div class="card-title">结构树
+          <span class="tree-tools">
+            <button class="mini-btn" id="tree-isolate" title="仅显示选中的部件（再次点击恢复全部）">单独查看</button>
+            <button class="mini-btn" id="tree-fit" title="将相机对准选中的部件">聚焦</button>
+          </span>
+        </div>
         <div id="tree"><div class="tree-empty">加载模型后显示场景层级</div></div>
       </div>
       <div class="card">

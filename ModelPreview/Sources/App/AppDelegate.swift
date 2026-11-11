@@ -101,6 +101,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         for url in urls { openModel(url) }
     }
 
+    // MARK: - 最近打开文件（磁盘持久化）
+
+    /// 最近文件记录文件（放在用户 Application Support 下，重启不丢）
+    private var recentURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("3DModelPreview", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("recent-files.json")
+    }
+
+    private func loadRecentFiles() -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: recentURL),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return arr
+    }
+
+    private func saveRecentFiles(_ list: [[String: Any]]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: list) else { return }
+        try? data.write(to: recentURL, options: .atomic)
+    }
+
+    /// 记录一次打开（去重 + 置顶 + 最多 12 条）
+    private func noteRecentFile(path: String, name: String) {
+        guard !path.isEmpty else { return }
+        var list = loadRecentFiles().filter { ($0["path"] as? String) != path }
+        list.insert(["path": path, "name": name, "time": Date().timeIntervalSince1970 * 1000], at: 0)
+        if list.count > 12 { list = Array(list.prefix(12)) }
+        saveRecentFiles(list)
+    }
+
+    /// 把最近文件列表推送给网页
+    private func pushRecentFiles() {
+        let list = loadRecentFiles()
+        guard let data = try? JSONSerialization.data(withJSONObject: list),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let js = "window.viewer && window.viewer.setRecentFiles && window.viewer.setRecentFiles(\(json))"
+        DispatchQueue.main.async { [weak self] in
+            self?.webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+    }
+
     /// 标准应用菜单：⌘Q 退出 + 编辑菜单（WKWebView 的复制/粘贴依赖它）
     private func setupAppMenu() {
         let main = NSMenu()
@@ -144,6 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                      "detail": "暂不支持 .\(ext) 文件。\n支持：GLB / GLTF / OBJ / FBX / STL / PLY / DAE / 3MF / BLEND"])
             return
         }
+        // 记录到「最近打开」（磁盘持久化，重启后仍在）
+        noteRecentFile(path: url.path, name: url.lastPathComponent)
         if ext == "blend" {
             openBlend(url)
         } else {
@@ -159,7 +202,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             openGLBAsBlend(cached, original: url)
             return
         }
-        sendCmd(["op": "loading", "text": "正在通过 Blender 转换模型…"])
+        // 转换前先检测 Blender 是否已安装：缺失时给出明确指引，而不是让用户等一次失败的转换
+        guard let blenderPath = BlendPipeline.findBlender() else {
+            sendCmd(["op": "error", "title": "未检测到 Blender",
+                     "detail": """
+                     .blend 文件需要借助 Blender 无头模式转换为 GLB 后预览。
+
+                     请先安装 Blender（https://www.blender.org/download/），完成后重新打开此文件。
+
+                     安装位置：/Applications/Blender.app
+                     """])
+            return
+        }
+        sendCmd(["op": "loading", "text": "正在通过 Blender 无头转换模型…（\(blenderPath.lastPathComponent)）"])
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             do {
@@ -231,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                     self?.webView.evaluateJavaScript("window.viewer && window.viewer.applyQlSettingsB64 && window.viewer.applyQlSettingsB64('\(b64)')", completionHandler: nil)
                 }
             }
+            pushRecentFiles()
             if let pending = pendingURL { pendingURL = nil; openModel(pending) }
         case "screenshot":
             saveScreenshot(name: body["name"] as? String ?? "model.png",
@@ -243,6 +299,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                          images: body["images"] as? [[String: Any]] ?? [])
         case "open-panel":
             pickFile(append: body["append"] as? Bool ?? false)
+        case "open-recent":
+            if let path = body["path"] as? String {
+                openModel(URL(fileURLWithPath: path))
+            }
+        case "recent-add":
+            if let path = body["path"] as? String {
+                noteRecentFile(path: path, name: body["name"] as? String ?? (path as NSString).lastPathComponent)
+                pushRecentFiles()
+            }
+        case "recent-clear":
+            saveRecentFiles([])
+            pushRecentFiles()
         case "theme":
             themeButtonState = (body["theme"] as? String) == "light"
         case "save-settings":
@@ -254,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 try? data.write(to: dir.appendingPathComponent("ql-settings.json"))
             }
         case "debug-info":
+            if let vn = body["sta"] as? String { appendMsgLog("STA " + vn); return }
             let meshes = body["meshes"] as? [[String: Any]] ?? []
             appendMsgLog("DBG smartSize=\(body["smartSize"] as? String ?? "?")")
             for m in meshes {

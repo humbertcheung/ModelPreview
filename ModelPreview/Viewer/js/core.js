@@ -121,6 +121,19 @@ export class SceneCore {
 
   /* ---------- 相机 ---------- */
 
+  /** 正交相机视锥按目标尺寸适配（正交投影下移动相机不会改变视锥大小，
+   *  聚焦部件时必须单独设置，否则部件会被视锥裁切） */
+  fitOrthoToSize(size) {
+    if (!this.active?.isOrthographicCamera) return;
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    const vh = Math.max(size, 0.0001) * 1.35;   // 留 35% 余量，部件完整可见
+    this.ortho.top = vh / 2; this.ortho.bottom = -vh / 2;
+    this.ortho.left = -vh * (w / h) / 2; this.ortho.right = vh * (w / h) / 2;
+    this.ortho.updateProjectionMatrix();
+    this.requestRender();
+  }
+
   setCameraKind(kind) {
     if (kind === this.camKind) return this.camKind;
     const src = this.active;
@@ -203,17 +216,8 @@ export class SceneCore {
     const RE_FRONT = /(前|frt|front|fwd|nose|hood|bonnet|bumper|前部)/i;
     const RE_BACK = /(后|bck|back|rear|tail|trunk|尾)/i;
 
-    // 收集 mesh 名称与包围盒中心
-    const meshes = [];
-    for (const m of this.models) {
-      m.root.updateMatrixWorld(true);
-      m.root.traverse(o => {
-        if (!o.isMesh || !o.geometry?.attributes?.position) return;
-        o.geometry.computeBoundingBox();
-        const c = o.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(o.matrixWorld);
-        meshes.push({ name: o.name || '', center: c });
-      });
-    }
+    // 收集主体 mesh 的名称与包围盒中心（排除离群件，保证对称面中心准确）
+    const meshes = this.bodyMeshes().map(m => ({ name: m.node.name || '', center: m.center }));
     if (!meshes.length) return null;
 
     // 模型整体包围盒
@@ -287,12 +291,12 @@ export class SceneCore {
     forward.normalize();
     if (namedForward && forward.dot(namedForward) < 0) forward.negate();
 
-    // 对称面中心：左右对中点的均值（x/z），y 用整体包围盒中心
-    const symCenter = allCenter.clone();
-    if (pairMids.length) {
-      const m = mean(pairMids);
-      symCenter.x = m.x; symCenter.z = m.z;
-    }
+    // 对称面中心：直接取「主体包围盒中心」，与取景(smartBoundingBox)保持一致。
+    // 注意：不能用左右配对中点的均值——并非所有部件都有配对（缺少配对的部件不参与），
+    // 均值会偏离模型真实中心，导致模型在视口里偏在一侧。
+    // 左右配对只用于确定「方向」(forward/right)，不用于定位。
+    const bodyBox = this.smartBoundingBox();
+    const symCenter = bodyBox ? bodyBox.getCenter(new THREE.Vector3()) : allCenter.clone();
 
     this._axes = { forward, right, up: worldUp.clone(), symCenter };
     this._axesKey = key;
@@ -506,30 +510,49 @@ export class SceneCore {
   }
 
   /** 智能包围盒：以顶点数最多的 mesh（主体）为锚点，排除巨大地面/背景平面与远处离群件 */
-  smartBoundingBox() {
+  /** 主体 mesh 集合（排除背景板/大平面等离群件）。
+   *  参考尺度取「各 mesh 最大边的中位数」——比「顶点最多的 mesh」稳健，
+   *  后者会被高面数的大平面带偏（导致模型在视口里偏到角落）。
+   *  取景、包围盒、朝向检测共用同一套「主体」判定，结果才一致。 */
+  bodyMeshes() {
     const meshes = [];
     for (const m of this.models) {
+      m.root.updateMatrixWorld(true);
       m.root.traverse(o => {
         if (o.isMesh && o.geometry?.attributes?.position) {
           o.geometry.computeBoundingBox();
           const b = o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
-          meshes.push({ box: b, verts: o.geometry.attributes.position.count });
+          const size = b.getSize(new THREE.Vector3());
+          meshes.push({
+            node: o,
+            box: b,
+            center: b.getCenter(new THREE.Vector3()),
+            maxDim: Math.max(size.x, size.y, size.z) || 0,
+          });
         }
       });
     }
+    if (!meshes.length) return [];
+    const median = (arr) => {
+      const a = [...arr].sort((x, y) => x - y);
+      return a[Math.floor(a.length / 2)] ?? 0;
+    };
+    const scale = Math.max(median(meshes.map(m => m.maxDim)), 1e-6);
+    const ref = new THREE.Vector3(
+      median(meshes.map(m => m.center.x)),
+      median(meshes.map(m => m.center.y)),
+      median(meshes.map(m => m.center.z)),
+    );
+    return meshes.filter(m => m.maxDim <= scale * 5 && m.center.distanceTo(ref) <= scale * 5);
+  }
+
+  /** 主体包围盒（智能取景用）：基于 bodyMeshes 排除离群件 */
+  smartBoundingBox() {
+    const meshes = this.bodyMeshes();
     if (!meshes.length) return null;
-    const anchor = meshes.reduce((a, b) => b.verts > a.verts ? b : a);
-    const asize = anchor.box.getSize(new THREE.Vector3());
-    const aMax = Math.max(asize.x, asize.y, asize.z) || 1;
-    const aCenter = anchor.box.getCenter(new THREE.Vector3());
-    const keep = meshes.filter(m => {
-      const s = Math.max(...m.box.getSize(new THREE.Vector3()).toArray());
-      const c = m.box.getCenter(new THREE.Vector3());
-      return s <= aMax * 5 && c.distanceTo(aCenter) <= aMax * 5;
-    });
     const out = new THREE.Box3();
-    for (const m of keep) out.union(m.box);
-    return out;
+    for (const m of meshes) out.union(m.box);
+    return out.isEmpty() ? null : out;
   }
 
   currentMaxDim() {

@@ -73,12 +73,85 @@ export class Outliner {
     this.onSelect = onSelect;
     this.selected = new Set();
     this.rowByUuid = {}; // 必须在构造函数初始化：未加载模型时拾取也会访问它
+    this.nodeByUuid = {}; // uuid → 节点（用于批量选择）
+    this.axesProvider = null; // 由 app 注入 core.modelAxes，用于自动标注部件位置
+    this.modelBox = null;    // 模型整体包围盒，用于判定部件位置
+  }
+
+  /** 部件分组键：把属于同一逻辑部件的多个节点归为一组。
+   *  规则：取名称的主词（第一段，或包含的已知主词），
+   *  第二段若是颜色/材质描述则保留（区分「其它覆盖件_灰」与「其它覆盖件_粉」）。
+   *  例：座椅_坐垫 / 座椅_靠背 / 座椅支架 → 座椅
+   *      其它覆盖件_灰_前右 → 其它覆盖件 灰
+   *      轮胎_前右 / 轮毂_前右 → 轮胎 / 轮毂（不同部件，不合并） */
+  groupKeyOf(name) {
+    if (!name) return '';
+    const clean = String(name).replace(/[（(].*?[）)]/g, '').trim();
+    const parts = clean.split(/[_\-\s]+/).filter(Boolean);
+    if (!parts.length) return '';
+    let key = parts[0];
+    // 无分隔符的名称（如「座椅支架」）：若包含已知主词则归入该主词
+    if (parts.length === 1 && this._groupStems?.length) {
+      // 排除自身（否则「座椅支架」会匹配到自己而不是「座椅」）
+      const hit = this._groupStems.find(st => st.length >= 2 && st !== key && key.includes(st));
+      if (hit) key = hit;
+    }
+    if (parts[1] && /^(灰|粉|蓝|黑|白|红|绿|黄|橙|紫|金属|碳纤维|哑光|亮面|深灰|浅灰|left|right|front|rear)/i.test(parts[1])) {
+      key += ' ' + parts[1];
+    }
+    return key.trim().toLowerCase();
+  }
+
+  /** 依据部件包围盒中心在模型坐标系中的位置，给出「车头/车尾/左侧/右侧/中部」标签。
+   *  模型命名不可靠时（部分导出器名称无语义），位置标签可帮助用户识别部件。 */
+  positionLabel(node) {
+    const axes = this.axesProvider?.();
+    if (!axes || !node?.geometry) return '';
+    const box = new THREE.Box3().setFromObject(node);
+    if (box.isEmpty()) return '';
+    const c = box.getCenter(new THREE.Vector3());
+    const whole = this.modelBox;
+    if (!whole || whole.isEmpty()) return '';
+    const wsize = whole.getSize(new THREE.Vector3());
+    const wctr = whole.getCenter(new THREE.Vector3());
+    const d = c.clone().sub(wctr);
+    const fwd = axes.forward, rgt = axes.right;
+    const along = d.dot(fwd);   // + 为车头方向
+    const side = d.dot(rgt);    // + 为车体右侧
+    const halfL = Math.max(1e-6, wsize.dot(fwd) * 0.22);
+    const halfW = Math.max(1e-6, wsize.dot(rgt) * 0.22);
+    const parts = [];
+    if (along > halfL) parts.push('车头');
+    else if (along < -halfL) parts.push('车尾');
+    if (side > halfW) parts.push('右侧');
+    else if (side < -halfW) parts.push('左侧');
+    return parts.join('·');
   }
 
   build(models) {
+    // 阻止结构树内出现文本选择光标/选中高亮
+    if (!this._selGuardBound) {
+      this._selGuardBound = true;
+      this.treeEl.addEventListener('selectstart', (e) => e.preventDefault());
+      this.treeEl.addEventListener('mousedown', (e) => {
+        // 在非按钮元素上阻止默认行为，彻底避免拖动选中文本
+        if (e.target?.closest('button')) return;
+        e.preventDefault();
+      });
+    }
     this.treeEl.innerHTML = '';
     this.selected.clear();
     this.rowByUuid = {};
+    // 收集主词表（名称中 '_' 之前的主词），供 groupKeyOf 归组使用
+    this._groupStems = [];
+    for (const m of models) {
+      m.root.traverse(o => {
+        const nm = o.name || '';
+        const stem = nm.split(/[_\-\s]+/)[0];
+        if (stem && stem.length >= 2 && !this._groupStems.includes(stem)) this._groupStems.push(stem);
+      });
+    }
+    this._groupStems.sort((a, b) => b.length - a.length); // 长主词优先匹配
     let total = 0;
     for (const m of models) {
       const rootRow = this.makeRow(m.root, m.name, true);
@@ -125,12 +198,24 @@ export class Outliner {
     name.className = 'tname';
     name.textContent = label || '(未命名)';
 
+    // 位置标签：命名本身已含方向词时不再重复标注
+    let posTag = '';
+    try {
+      if (!/(前|后|左|右|front|rear|back|left|right)/i.test(label || '')) {
+        posTag = this.positionLabel(node);
+      }
+    } catch { /* 忽略 */ }
+    const pos = document.createElement('span');
+    pos.className = 't-pos';
+    pos.textContent = posTag;
+    pos.hidden = !posTag;
+
     const eye = document.createElement('button');
     eye.className = 'eye';
     eye.title = '显示 / 隐藏';
     eye.innerHTML = '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/></svg>';
 
-    row.appendChild(twist); row.appendChild(icon); row.appendChild(name); row.appendChild(eye);
+    row.appendChild(twist); row.appendChild(icon); row.appendChild(name); row.appendChild(pos); row.appendChild(eye);
 
     const childrenEl = document.createElement('div');
     childrenEl.className = 'tree-children collapsed'; // 默认所有层级折叠
@@ -147,8 +232,42 @@ export class Outliner {
     };
     twist.addEventListener('click', (e) => { e.stopPropagation(); toggleTwist(); });
     row.addEventListener('dblclick', (e) => { e.preventDefault(); toggleTwist(); }); // 双击行也可展开/折叠
-    row.addEventListener('click', () => this.select(node, row, false));
-    row.addEventListener('click', (e) => { if (e.metaKey || e.ctrlKey) this.select(node, row, true); }, false);
+    // 选择语义（必须合并为一个 click 处理器，注册多个会导致互相覆盖）：
+    //   单击            = 单选
+    //   Cmd/Ctrl + 单击 = 追加 / 取消（离散多选）
+    //   Shift + 单击    = 从上次选中项到本项的连续区间多选（类似 Excel）
+    row.addEventListener('click', (e) => {
+      if (e.shiftKey && this._anchorRow && this._anchorRow !== row) {
+        this.selectRange(this._anchorRow, row);
+      } else if (e.metaKey || e.ctrlKey) {
+        this.select(node, row, true);
+      } else {
+        this.select(node, row, false);
+      }
+      this._anchorRow = row;
+    });
+    // 右键：按「同名部件组」批量选中。
+    // 一个视觉部件常被拆成多个节点（如座椅 = 坐垫 + 靠背 + 支架；车轮 = 轮胎 + 轮毂），
+    // 逐个点选容易只显示一半；右键一次选中同组即可完整查看。
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const group = this.groupKeyOf(label || '');
+      if (!group) { this.toast('该部件没有同名分组'); return; }
+      const hits = [];
+      for (const r of Object.values(this.rowByUuid || {})) {
+        const t = r.querySelector('.tname')?.textContent || '';
+        if (this.groupKeyOf(t) === group) hits.push(r);
+      }
+      if (hits.length < 2) { this.toast(`「${label}」只有 1 个节点，无需分组`); return; }
+      this.selected.clear();
+      for (const r of hits) {
+        r.classList.add('selected');
+        const n = this.nodeByUuid?.[r.dataset.uuid];
+        if (n) this.selected.add(n);
+      }
+      this.onSelect([...this.selected]);
+      this.toast(`已选中「${group}」的 ${hits.length} 个部件，可点「单独查看」`, 3200);
+    });
     let visible = true;
     eye.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -161,8 +280,28 @@ export class Outliner {
     });
 
     this.rowByUuid[node.uuid] = row;
+    this.nodeByUuid = this.nodeByUuid || {};
+    this.nodeByUuid[node.uuid] = node;
 
     return { el: item, childrenEl }; // el 是外层容器（行 + 子级），childrenEl 供父级挂子节点
+  }
+
+  /** 连续区间选择（Shift + 单击）：选中 anchorRow 到 targetRow 之间的所有可见行 */
+  selectRange(anchorRow, targetRow) {
+    const rows = [...this.treeEl.querySelectorAll('.tree-row')];
+    const a = rows.indexOf(anchorRow), b = rows.indexOf(targetRow);
+    if (a < 0 || b < 0) { this.select(this.nodeByUuid?.[targetRow.dataset.uuid], targetRow, false); return; }
+    const [s, e] = a < b ? [a, b] : [b, a];
+    this.selected.clear();
+    for (const r of Object.values(this.rowByUuid || {})) r.classList.remove('selected');
+    for (let i = s; i <= e; i++) {
+      const r = rows[i];
+      if (!r) continue;
+      r.classList.add('selected');
+      const n = this.nodeByUuid?.[r.dataset.uuid];
+      if (n) this.selected.add(n);
+    }
+    this.onSelect([...this.selected]);
   }
 
   select(node, row, additive) {
